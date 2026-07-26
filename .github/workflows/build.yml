@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: "main"
+      smoke_boot:
+        description: "meshcom only: boot the built firmware in qemu and require the CLIENT STARTED marker"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write        # publish/overwrite the rolling release + index.json
@@ -52,6 +57,7 @@ jobs:
             -e STACK="${{ github.event.inputs.stack }}" \
             -e SOURCE_COMMIT="${{ github.event.inputs.source_commit }}" \
             -e LHPC_REF="${{ github.event.inputs.lhpc_ref }}" \
+            -e SMOKE_BOOT="${{ github.event.inputs.smoke_boot }}" \
             -v "$PWD:/work" -w /work \
             debian:trixie bash builders/build.sh
 
