@@ -16,14 +16,14 @@ gh release view "$REL" >/dev/null 2>&1 || \
   gh release create "$REL" --title "lhpc binaries (rolling)" \
     --notes "Latest per-stack aarch64/Trixie binaries. Consumed via index.json (sha256-verified)." --latest=false
 
-# Upload/overwrite the tarball(s) + checksums.
+# Upload/overwrite the tarball(s).
 for t in "${tarballs[@]}"; do
   gh release upload "$REL" "$t" --clobber
 done
-( cd dist && sha256sum *.tar.zst > SHA256SUMS )
-gh release upload "$REL" dist/SHA256SUMS --clobber
 
-# Merge fragments into index.json, preserving other stacks.
+# Merge fragments into index.json AND regenerate SHA256SUMS — both preserving the OTHER stacks.
+# SHA256SUMS is derived from the merged index (not local dist/), so a single-stack publish never
+# drops the other stacks' checksums; index.json stays the authoritative source of truth for both.
 python3 - "$REPO" "$REL" <<'PY'
 import json, glob, os, sys, urllib.request
 repo, rel = sys.argv[1], sys.argv[2]
@@ -42,7 +42,11 @@ for f in glob.glob("dist/*.frag.json"):
     idx[stack] = d
 os.makedirs("dist", exist_ok=True)
 json.dump(idx, open("dist/index.json", "w"), indent=2, sort_keys=True)
+# SHA256SUMS across ALL stacks in the merged index (standard `sha256sum -c` format).
+with open("dist/SHA256SUMS", "w") as fh:
+    for stack in sorted(idx):
+        fh.write(f"{idx[stack]['sha256']}  {stack}.tar.zst\n")
 print("index.json:", json.dumps(idx, indent=2))
 PY
-gh release upload "$REL" dist/index.json --clobber
+gh release upload "$REL" dist/index.json dist/SHA256SUMS --clobber
 echo "published to release '$REL'"
