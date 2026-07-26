@@ -6,8 +6,9 @@ set -euo pipefail
 
 echo "==> Environment"
 uname -m
-grep -E '^PRETTY_NAME' /etc/os-release
-ldd --version | head -1
+sed -n 's/^PRETTY_NAME=//p' /etc/os-release
+# `| head` under `set -o pipefail` is SIGPIPE-racy (exit 141); sed reads the whole stream.
+ldd --version 2>&1 | sed -n '1p'
 
 echo "==> Base tooling"
 export DEBIAN_FRONTEND=noninteractive
