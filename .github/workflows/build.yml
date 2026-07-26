@@ -55,6 +55,10 @@ jobs:
             -v "$PWD:/work" -w /work \
             debian:trixie bash builders/build.sh
 
+      - name: Reclaim build outputs (container ran as root)
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" dist 2>/dev/null || true
+
       - name: Publish (rolling release + index.json)
         if: hashFiles('dist/*.tar.zst') != ''
         env:
