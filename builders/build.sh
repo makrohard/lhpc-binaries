@@ -14,7 +14,12 @@ echo "==> Base tooling"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-  git ca-certificates curl python3 python3-venv python3-pip xz-utils zstd file >/dev/null
+  git ca-certificates curl python3 python3-venv python3-pip xz-utils zstd file \
+  build-essential cmake >/dev/null
+# build-essential (gcc/g++/make) + cmake are UNIVERSAL compile prerequisites. lhpc's per-stack
+# manifest deps assume a shared system where build-essential is already present (declared by the
+# daemon stack; installed system-wide by bootstrap-deps' merged transaction) — meshtastic's own
+# `require` list does NOT include gcc, so a per-stack build must provide the base toolchain here.
 
 echo "==> Raspberry Pi archive (match the Pi's userland: Debian Trixie + archive.raspberrypi.com)"
 # The target is Raspberry Pi OS = Debian + the RPi archive, which ships RPi-specific packages
