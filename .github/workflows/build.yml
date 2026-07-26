@@ -1,0 +1,56 @@
+name: build-binary
+
+# One-click binary builder for lhpc's long-compiling stacks.
+# Runs on GitHub's native arm64 runner; the actual compile happens INSIDE a
+# debian:trixie aarch64 container (via `docker run`) so the binary links against
+# the exact libraries the target Raspberry Pi (Debian 13 Trixie, glibc 2.41) has.
+# The runner host handles checkout + release publishing (needs Node, which the
+# trixie container lacks); only the build itself runs in trixie.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: "Stack to build"
+        required: true
+        type: choice
+        options:
+          - plumbing-check
+          - daemon
+          - meshtastic
+          - meshcom
+        default: plumbing-check
+      source_commit:
+        description: "Source commit to build (blank = the lhpc manifest pin)"
+        required: false
+        type: string
+        default: ""
+      lhpc_ref:
+        description: "lhpc version that provides the build recipe (branch/tag/sha)"
+        required: false
+        type: string
+        default: "main"
+
+permissions:
+  contents: write        # publish/overwrite the rolling release + index.json
+
+concurrency:
+  group: build-${{ github.event.inputs.stack }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout builder repo (on the Ubuntu host)
+        uses: actions/checkout@v4
+
+      - name: Build in Debian Trixie (aarch64)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e STACK="${{ github.event.inputs.stack }}" \
+            -e SOURCE_COMMIT="${{ github.event.inputs.source_commit }}" \
+            -e LHPC_REF="${{ github.event.inputs.lhpc_ref }}" \
+            -v "$PWD:/work" -w /work \
+            debian:trixie bash builders/build.sh

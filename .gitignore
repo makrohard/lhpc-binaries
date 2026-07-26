@@ -1,0 +1,7 @@
+# build outputs never live in git — they are GitHub Release assets
+*.tar.zst
+*.tar.xz
+SHA256SUMS
+/dist/
+__pycache__/
+*.pyc
