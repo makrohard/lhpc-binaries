@@ -35,7 +35,11 @@ HEAD="$(git -C "$ROOT/$M_PATH" rev-parse HEAD)"
 [ "$HEAD" = "$COMMIT" ] || { echo "HEAD $HEAD != requested $COMMIT" >&2; exit 4; }
 
 echo "==> lhpc build meshtastic (PlatformIO native; link-gate is a build step — slow)"
-"$LHPC" build meshtastic --yes
+if ! "$LHPC" build meshtastic --yes; then
+  echo "=== lhpc build log (tail) ==="
+  cat "$ROOT"/logs/build-meshtastic*.log 2>/dev/null | tail -100 || true
+  exit 5
+fi
 
 MTD="$ROOT/build/tools/meshtasticd/meshtasticd"
 [ -x "$MTD" ] || { echo "FAIL: meshtasticd not at $MTD" >&2; exit 5; }
