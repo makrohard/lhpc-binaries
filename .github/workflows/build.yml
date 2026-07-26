@@ -1,11 +1,20 @@
-name: build-binary
+# One-click binary builder — hardened three-job pipeline.
+#
+# Security model (audit-driven):
+#   * The BUILD job executes untrusted upstream build systems. It runs with contents: read,
+#     a credential-free checkout (persist-credentials: false), and the container sees ONLY
+#     read-only builder scripts/keyrings plus a separate writable /out — never .git, never a
+#     writable checkout, never a token. Result leaves via a GitHub Actions artifact.
+#   * The RUNTIME-TEST job proves the artifact runs on a CLEAN Trixie with ONLY the declared
+#     runtime_deps installed (the build container is full of toolchains and proves nothing).
+#   * The PUBLISH job is the only one with contents: write. It re-checks out this repo at the
+#     exact workflow SHA, validates + re-hashes everything it received, NEVER executes anything
+#     from the artifact, publishes content-addressed assets, and uploads index.json LAST under
+#     a single GLOBAL concurrency group (serialized across all stacks).
+#
+# All actions are pinned to full commit SHAs; the container is pinned by digest.
 
-# One-click binary builder for lhpc's long-compiling stacks.
-# Runs on GitHub's native arm64 runner; the actual compile happens INSIDE a
-# debian:trixie aarch64 container (via `docker run`) so the binary links against
-# the exact libraries the target Raspberry Pi (Debian 13 Trixie, glibc 2.41) has.
-# The runner host handles checkout + release publishing (needs Node, which the
-# trixie container lacks); only the build itself runs in trixie.
+name: build-binary
 
 on:
   workflow_dispatch:
@@ -13,60 +22,127 @@ on:
       stack:
         description: "Stack to build"
         required: true
-        type: choice
-        options:
-          - plumbing-check
-          - daemon
-          - meshtastic
-          - meshcom
         default: plumbing-check
+        type: choice
+        options: [plumbing-check, daemon, meshtastic, meshcom]
       source_commit:
-        description: "Source commit to build (blank = the lhpc manifest pin)"
+        description: "Source commit override (blank = the lhpc manifest pin)"
         required: false
-        type: string
         default: ""
       lhpc_ref:
-        description: "lhpc version that provides the build recipe (branch/tag/sha)"
+        description: "loraham-pi-control ref (branch/tag/SHA) — resolved EXACTLY, no fallback"
         required: false
-        type: string
         default: "main"
       smoke_test:
-        description: "Run the per-stack smoke test as a publish gate (daemon: --version; meshtastic/meshcom: boot + web GUI reachable). On by default."
+        description: "Smoke-test gate. false = build-only DIAGNOSTIC run (never published)"
         required: false
-        type: boolean
         default: true
+        type: boolean
 
-permissions:
-  contents: write        # publish/overwrite the rolling release + index.json
+permissions: {}
 
 concurrency:
   group: build-${{ github.event.inputs.stack }}
   cancel-in-progress: false
 
+env:
+  CONTAINER_IMAGE: debian@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4  # debian:trixie (linux/arm64 manifest list)
+
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
     steps:
-      - name: Checkout builder repo (on the Ubuntu host)
-        uses: actions/checkout@v5
+      - name: Checkout builder repo (credential-free)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          persist-credentials: false
 
-      - name: Build in Debian Trixie (aarch64)
+      - name: Build in Debian Trixie (aarch64) — untrusted code, no credentials in reach
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
           docker run --rm \
             -e STACK="${{ github.event.inputs.stack }}" \
             -e SOURCE_COMMIT="${{ github.event.inputs.source_commit }}" \
             -e LHPC_REF="${{ github.event.inputs.lhpc_ref }}" \
             -e SMOKE_TEST="${{ github.event.inputs.smoke_test }}" \
-            -v "$PWD:/work" -w /work \
-            debian:trixie bash builders/build.sh
+            -e BUILDER_COMMIT="${{ github.sha }}" \
+            -e CONTAINER_DIGEST="${CONTAINER_IMAGE}" \
+            -v "$PWD/builders:/builders:ro" \
+            -v "$PWD/keyrings:/keyrings:ro" \
+            -v "$RUNNER_TEMP/out:/out" \
+            -w /out \
+            "${CONTAINER_IMAGE}" bash /builders/build.sh
 
-      - name: Reclaim build outputs (container ran as root)
+      - name: Reclaim outputs (container ran as root)
         if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" dist 2>/dev/null || true
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out" 2>/dev/null || true
 
-      - name: Publish (rolling release + index.json)
-        if: hashFiles('dist/*.tar.zst') != ''
+      - name: Hand off via artifact
+        if: github.event.inputs.stack != 'plumbing-check'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        with:
+          name: out-${{ github.event.inputs.stack }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 3
+
+  runtime-test:
+    needs: build
+    if: github.event.inputs.stack != 'plumbing-check'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout builder repo (credential-free)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          persist-credentials: false
+
+      - name: Fetch build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093   # v4
+        with:
+          name: out-${{ github.event.inputs.stack }}-${{ github.run_id }}
+          path: out
+
+      - name: Clean-runtime test — ONLY declared runtime_deps, then the same smoke
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e STACK="${{ github.event.inputs.stack }}" \
+            -e SMOKE_TEST="${{ github.event.inputs.smoke_test }}" \
+            -v "$PWD/builders:/builders:ro" \
+            -v "$PWD/keyrings:/keyrings:ro" \
+            -v "$PWD/out:/out:ro" \
+            "${CONTAINER_IMAGE}" bash /builders/runtime-test.sh
+
+  publish:
+    needs: [build, runtime-test]
+    # smoke_test=false is a DIAGNOSTIC build: it must never reach the release. publish.sh
+    # additionally verifies the fragment's recorded smoke mode+result (defense in depth).
+    if: github.event.inputs.stack != 'plumbing-check' && github.event.inputs.smoke_test != 'false'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    concurrency:
+      group: publish            # ONE global group — all stacks serialize here
+      cancel-in-progress: false
+    steps:
+      - name: Checkout builder repo at the exact workflow SHA (credential-free)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Fetch build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093   # v4
+        with:
+          name: out-${{ github.event.inputs.stack }}-${{ github.run_id }}
+          path: out
+
+      - name: Validate + publish (content-addressed assets, index.json last)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash builders/publish.sh
+        run: bash builders/publish.sh out

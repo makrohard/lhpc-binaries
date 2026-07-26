@@ -4,26 +4,12 @@
 # from lhpc's manifest (no hardcoding); SOURCE_COMMIT overrides the daemon commit only.
 set -euo pipefail
 
-LHPC=/opt/lhpcvenv/bin/lhpc
-PY=/opt/lhpcvenv/bin/python
-ROOT=/work/root
-DIST=/work/dist
+ROOT=/build/root
+DIST=/out
 mkdir -p "$ROOT/src" "$DIST"
 export LHPC_RUNTIME_ROOT="$ROOT"
-
-# Read a component's (remote, pin_commit, path) straight from lhpc's manifest loader.
-read_src() { "$PY" - "$1" <<'PY'
-import sys
-from lhpc.core.manifest import load_manifest
-cid = sys.argv[1]
-for st in load_manifest():
-    for c in st.components:
-        if c.id == cid and getattr(c, "source", None):
-            print(c.source.remote, c.source.pin_commit, c.source.path)
-            raise SystemExit(0)
-sys.exit("component/source not found: " + cid)
-PY
-}
+source /builders/lib-build.sh
+source /builders/headless-policy.sh
 
 read -r D_REMOTE D_PIN D_PATH  <<<"$(read_src loraham-daemon)"
 read -r R_REMOTE R_PIN R_PATH  <<<"$(read_src radiolib)"
@@ -49,42 +35,19 @@ BIN="$ROOT/$D_PATH/loraham_daemon/loraham_daemon"
 [ -x "$BIN" ] || { echo "FAIL: daemon binary not at $BIN" >&2; exit 5; }
 file "$BIN"
 
-if [ "${SMOKE_TEST:-true}" != "false" ]; then
-  echo "==> Smoke gate: the daemon binary executes on the target userland"
-  # `--version` prints "loraham_daemon <ver>" and exit(0). This proves the dynamic loader resolves and
-  # loads every .so AT RUNTIME (stronger than ldd) and main() runs — without needing radio hardware.
-  # The daemon is a Unix-socket service with no web UI, so there is no web reachability check here.
-  if ! OUT="$("$BIN" --version 2>&1)"; then
-    echo "FAIL: daemon --version did not exit 0" >&2; echo "$OUT" >&2; exit 7
-  fi
-  echo "$OUT"
-  echo "$OUT" | grep -q 'loraham_daemon' || { echo "FAIL: unexpected --version output" >&2; exit 7; }
-  echo "SMOKE: PASS (daemon executes on target userland)"
-fi
+run_smoke daemon
 
-echo "==> Runtime deps (ldd -> dpkg -S)"
+echo "==> Runtime deps (ldd -> dpkg -S; unowned libraries are a hard failure)"
 echo "--- raw ldd ---"; ldd "$BIN" 2>&1 | sed -n '1,25p' || true
-mapfile -t DEPS < <(
-  ldd "$BIN" 2>/dev/null | grep -oE '/[^ ]+\.so[.0-9]*' | sort -u \
-  | while read -r so; do
-      dpkg -S "$(readlink -f "$so" 2>/dev/null || echo "$so")" 2>/dev/null | cut -d: -f1
-    done | sort -u
-)
+mapfile -t DEPS < <(deps_of "$BIN")
+require_owned_deps daemon "${DEPS[@]:-}"
 printf 'runtime_deps: %s\n' "${DEPS[*]:-<none>}"
-# Graphics denylist — a headless daemon must never pull these.
-if printf '%s\n' "${DEPS[@]:-}" | grep -qiE 'libx11|libsdl|libgtk|mesa|libgl1|wayland|pulse|libxcb'; then
-  echo "FAIL: graphics runtime dependency detected" >&2; exit 6
-fi
+headless_deps_check daemon "${DEPS[@]:-}"
+ldd_closure_check daemon "$BIN"
 
 echo "==> Pack (tar.zst; extracts relative to the runtime root)"
 STAGE="$(mktemp -d)"
 install -D "$BIN" "$STAGE/$D_PATH/loraham_daemon/loraham_daemon"
-tar --zstd -C "$STAGE" -cf "$DIST/daemon.tar.zst" .
-SHA="$(sha256sum "$DIST/daemon.tar.zst" | cut -d' ' -f1)"
-
-DEPS_JSON="$(printf '%s\n' "${DEPS[@]:-}" | sed '/^$/d' | sed 's/.*/"&"/' | paste -sd, -)"
-cat > "$DIST/daemon.frag.json" <<EOF
-{"stack":"daemon","sha256":"$SHA","built_from":"$COMMIT","runtime_deps":[${DEPS_JSON}],"target":"aarch64-trixie","extract_to":"runtime-root"}
-EOF
-echo "== fragment =="; cat "$DIST/daemon.frag.json"; echo
-echo "PACKED daemon.tar.zst  sha256=$SHA"
+COMPONENTS="{\"loraham-daemon\": \"$COMMIT\", \"radiolib\": \"$R_PIN\"}"
+pack_and_fragment daemon "$STAGE" "$COMMIT" "$COMPONENTS" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
+write_provenance daemon
