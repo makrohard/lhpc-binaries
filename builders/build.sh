@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Runs INSIDE a debian:trixie aarch64 container. Sets up the build environment,
-# installs lhpc (pure Python — no compile), then dispatches to the per-stack
-# builder. Kept deliberately small; each stack's specifics live in builders/<stack>.sh.
+# Runs INSIDE the digest-pinned debian:trixie aarch64 container. Sets up the build environment,
+# installs lhpc (pure Python — no compile), then dispatches to the per-stack builder.
+#
+# SECURITY: this stage executes UNTRUSTED upstream build systems. The container therefore sees
+# only read-only /builders + /keyrings and a writable /out — no git checkout of this repo, no
+# credentials of any kind (the workflow's build job runs with contents: read and a
+# persist-credentials:false checkout on the host side).
 set -euo pipefail
 
 echo "==> Environment"
@@ -9,6 +13,7 @@ uname -m
 sed -n 's/^PRETTY_NAME=//p' /etc/os-release
 # `| head` under `set -o pipefail` is SIGPIPE-racy (exit 141); sed reads the whole stream.
 ldd --version 2>&1 | sed -n '1p'
+echo "builder_commit: ${BUILDER_COMMIT:-<unset>}  container: ${CONTAINER_DIGEST:-<unset>}"
 
 echo "==> Base tooling"
 export DEBIAN_FRONTEND=noninteractive
@@ -26,15 +31,24 @@ echo "==> Raspberry Pi archive (match the Pi's userland: Debian Trixie + archive
 # (e.g. liblgpio-dev, used by RadioLib's Pi HAL) that vanilla debian:trixie lacks. The signing key
 # is vendored in this repo (the authentic 'Raspberry Pi Archive Signing Key', fingerprint
 # CF8A1AF5...7FA3303E) so we add no trust and fetch no keys at build time.
-install -D -m 0644 keyrings/raspberrypi-archive.asc /usr/share/keyrings/raspberrypi-archive.asc
+install -D -m 0644 /keyrings/raspberrypi-archive.asc /usr/share/keyrings/raspberrypi-archive.asc
 echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive.asc] http://archive.raspberrypi.com/debian trixie main" \
   > /etc/apt/sources.list.d/raspi.list
 apt-get update -qq
 
-echo "==> Install lhpc (${LHPC_REF:-main}) — Python, no build"
-git clone --quiet --depth 1 --branch "${LHPC_REF:-main}" \
-  https://github.com/makrohard/loraham-pi-control.git /opt/lhpc-src \
-  || git clone --quiet https://github.com/makrohard/loraham-pi-control.git /opt/lhpc-src
+echo "==> Install lhpc — EXACT ref resolution, no fallback (${LHPC_REF:-main})"
+# Any branch, tag or full SHA resolves through one honest path: fetch the requested ref, detach
+# at the RESOLVED commit, assert, print, and RECORD it in the fragment. A typo or unknown ref
+# FAILS the build — it can never silently become default main.
+git clone --quiet --no-checkout https://github.com/makrohard/loraham-pi-control.git /opt/lhpc-src
+git -C /opt/lhpc-src fetch --quiet origin "${LHPC_REF:-main}"
+LHPC_COMMIT="$(git -C /opt/lhpc-src rev-parse --verify FETCH_HEAD^{commit})"
+git -C /opt/lhpc-src -c advice.detachedHead=false checkout --quiet "$LHPC_COMMIT"
+if [[ "${LHPC_REF:-main}" =~ ^[0-9a-f]{40}$ ]] && [ "$LHPC_COMMIT" != "${LHPC_REF}" ]; then
+  echo "FAIL: resolved lhpc commit $LHPC_COMMIT != requested ${LHPC_REF}" >&2; exit 4
+fi
+export LHPC_COMMIT
+echo "lhpc recipe commit: $LHPC_COMMIT"
 python3 -m venv /opt/lhpcvenv
 /opt/lhpcvenv/bin/pip install --quiet --upgrade pip
 /opt/lhpcvenv/bin/pip install --quiet /opt/lhpc-src
@@ -75,8 +89,8 @@ case "${STACK}" in
     ;;
   daemon|meshtastic|meshcom)
     install_declared_deps "${STACK}"
-    if [ -x "builders/${STACK}.sh" ]; then
-      exec bash "builders/${STACK}.sh"
+    if [ -f "/builders/${STACK}.sh" ]; then
+      exec bash "/builders/${STACK}.sh"
     fi
     echo "builder for '${STACK}' not implemented yet" >&2
     exit 3
