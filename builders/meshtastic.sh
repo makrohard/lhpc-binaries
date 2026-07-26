@@ -79,6 +79,10 @@ Webserver:
   SSLCert: $SM/cert.pem
 Logging:
   LogLevel: info
+General:
+  # On a Pi meshtasticd derives the node MAC from eth0; the CI container has no usable
+  # interface, so it exits 8 ("Please set a MAC Address") without an explicit one.
+  MACAddress: "02:00:00:00:00:01"
 YAML
   HOME="$SM" "$MTD" -c "$SM/config.yaml" >"$SM/meshtasticd.log" 2>&1 &
   MPID=$!
