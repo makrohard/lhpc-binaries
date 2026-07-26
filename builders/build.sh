@@ -16,6 +16,16 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
   git ca-certificates curl python3 python3-venv python3-pip xz-utils zstd file >/dev/null
 
+echo "==> Raspberry Pi archive (match the Pi's userland: Debian Trixie + archive.raspberrypi.com)"
+# The target is Raspberry Pi OS = Debian + the RPi archive, which ships RPi-specific packages
+# (e.g. liblgpio-dev, used by RadioLib's Pi HAL) that vanilla debian:trixie lacks. The signing key
+# is vendored in this repo (the authentic 'Raspberry Pi Archive Signing Key', fingerprint
+# CF8A1AF5...7FA3303E) so we add no trust and fetch no keys at build time.
+install -D -m 0644 keyrings/raspberrypi-archive.asc /usr/share/keyrings/raspberrypi-archive.asc
+echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive.asc] http://archive.raspberrypi.com/debian trixie main" \
+  > /etc/apt/sources.list.d/raspi.list
+apt-get update -qq
+
 echo "==> Install lhpc (${LHPC_REF:-main}) — Python, no build"
 git clone --quiet --depth 1 --branch "${LHPC_REF:-main}" \
   https://github.com/makrohard/loraham-pi-control.git /opt/lhpc-src \
