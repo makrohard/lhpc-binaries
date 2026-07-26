@@ -44,8 +44,6 @@ fi
 MTD="$ROOT/build/tools/meshtasticd/meshtasticd"
 [ -x "$MTD" ] || { echo "FAIL: meshtasticd not at $MTD" >&2; exit 5; }
 file "$MTD"
-"$MTD" --version >/dev/null 2>&1 || "$MTD" --help >/dev/null 2>&1 \
-  || echo "(no --version/--help; skipping smoke — non-fatal)"
 
 echo "==> Runtime deps"
 echo "--- raw ldd ---"; ldd "$MTD" 2>&1 | sed -n '1,40p' || true
@@ -59,6 +57,47 @@ printf 'runtime_deps: %s\n' "${DEPS[*]:-<none>}"
 # Graphics denylist — the headless server build must never pull these.
 if printf '%s\n' "${DEPS[@]:-}" | grep -qiE 'libx11|libsdl|libgtk|mesa|libgl1|wayland|pulse|libxcb'; then
   echo "FAIL: graphics runtime dependency detected — refusing" >&2; exit 6
+fi
+
+if [ "${SMOKE_TEST:-true}" != "false" ]; then
+  echo "==> Smoke gate: meshtasticd boots as a sim node and its web GUI is reachable"
+  # No radio in CI. `Lora: Module: sim` selects meshtastic's SimRadio (use_simradio), which skips all
+  # SPI/GPIO init, so the node boots fully headless and the web server comes up. (`-s` would force sim
+  # but short-circuits `-c`, so we drive sim through the config instead.) SSL cert is self-generated.
+  "$MTD" --version 2>&1 | sed -n '1p' || true
+  WEBROOT="$ROOT/build/tools/meshtasticd/web"
+  echo "web root: $WEBROOT"; ls "$WEBROOT" 2>/dev/null | head -8 || echo "(web root missing!)"
+  SM="$(mktemp -d)"
+  cat > "$SM/config.yaml" <<YAML
+---
+Lora:
+  Module: sim
+Webserver:
+  Port: 9443
+  RootPath: $WEBROOT
+  SSLKey: $SM/key.pem
+  SSLCert: $SM/cert.pem
+Logging:
+  LogLevel: info
+YAML
+  HOME="$SM" "$MTD" -c "$SM/config.yaml" >"$SM/meshtasticd.log" 2>&1 &
+  MPID=$!
+  echo "meshtasticd pid $MPID — polling https://127.0.0.1:9443/ for the web GUI"
+  web=0
+  for _ in $(seq 1 40); do
+    if ! kill -0 "$MPID" 2>/dev/null; then echo "meshtasticd exited early"; break; fi
+    code="$(curl -k -s -o "$SM/body.html" -w '%{http_code}' --max-time 3 https://127.0.0.1:9443/ 2>/dev/null || true)"
+    if [ "$code" = "200" ] && grep -qiE 'meshtastic|<!doctype html|<html' "$SM/body.html"; then
+      web=1; echo "web GUI 200 ($(wc -c <"$SM/body.html") bytes)"; break
+    fi
+    sleep 2
+  done
+  kill -TERM "$MPID" 2>/dev/null || true; sleep 1; kill -KILL "$MPID" 2>/dev/null || true
+  if [ "$web" != "1" ]; then
+    echo "=== meshtasticd log (tail) ==="; tail -50 "$SM/meshtasticd.log" 2>/dev/null || true
+    echo "FAIL: meshtastic web GUI not reachable on :9443" >&2; exit 8
+  fi
+  echo "SMOKE: PASS (meshtasticd boots as sim node; web GUI reachable on :9443)"
 fi
 
 echo "==> Pack (meshtasticd + web assets + build marker; runtime-root relative)"

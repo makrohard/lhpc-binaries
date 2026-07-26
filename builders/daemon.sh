@@ -49,9 +49,18 @@ BIN="$ROOT/$D_PATH/loraham_daemon/loraham_daemon"
 [ -x "$BIN" ] || { echo "FAIL: daemon binary not at $BIN" >&2; exit 5; }
 file "$BIN"
 
-echo "==> Smoke test"
-"$BIN" --help >/dev/null 2>&1 || "$BIN" --version >/dev/null 2>&1 \
-  || echo "(binary has no --help/--version; skipping smoke — non-fatal)"
+if [ "${SMOKE_TEST:-true}" != "false" ]; then
+  echo "==> Smoke gate: the daemon binary executes on the target userland"
+  # `--version` prints "loraham_daemon <ver>" and exit(0). This proves the dynamic loader resolves and
+  # loads every .so AT RUNTIME (stronger than ldd) and main() runs — without needing radio hardware.
+  # The daemon is a Unix-socket service with no web UI, so there is no web reachability check here.
+  if ! OUT="$("$BIN" --version 2>&1)"; then
+    echo "FAIL: daemon --version did not exit 0" >&2; echo "$OUT" >&2; exit 7
+  fi
+  echo "$OUT"
+  echo "$OUT" | grep -q 'loraham_daemon' || { echo "FAIL: unexpected --version output" >&2; exit 7; }
+  echo "SMOKE: PASS (daemon executes on target userland)"
+fi
 
 echo "==> Runtime deps (ldd -> dpkg -S)"
 echo "--- raw ldd ---"; ldd "$BIN" 2>&1 | sed -n '1,25p' || true

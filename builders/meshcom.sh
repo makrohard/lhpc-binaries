@@ -54,13 +54,43 @@ BRIDGE="$ROOT/$B_PATH/build/meshcom-loraham-bridge"
 file "$QEMU_BIN"; file "$BRIDGE"; ls -la "$FLASH"
 "$QEMU_BIN" --version 2>&1 | head -1 || true
 
-if [ "${SMOKE_BOOT:-}" = "true" ]; then
-  echo "==> Smoke boot: boot the built firmware under the built qemu; require the UART boot marker"
-  # scripts/test.sh is meshcom-qemu-raspi's own boot test: it self-boots the newest built flash.bin via
-  # run.sh (forwarding --qemu), then PASSES only on a FRESH 'CLIENT STARTED'/'Console started' UART marker
-  # in this run's log (web UI is diagnostic-only). Runs entirely in-container — no hardware, no host box.
-  ( cd "$ROOT/$Q_PATH" && timeout 600 scripts/test.sh --qemu "$QEMU_BIN" )
-  echo "SMOKE BOOT: PASS — firmware reached the boot marker under the built qemu"
+if [ "${SMOKE_TEST:-true}" != "false" ]; then
+  echo "==> Smoke gate: boot the firmware under the built qemu; require boot marker AND web GUI (:18083)"
+  # run.sh boots the guest (backgrounds qemu, writes .run/qemu.pid + uart-latest.log, forwards the guest
+  # web UI to host 127.0.0.1:18083). We keep the guest up ourselves so the web GUI can be gated (the
+  # maintainer's test.sh stops the guest it boots and treats web as diagnostic-only). Entirely in-container.
+  (
+    cd "$ROOT/$Q_PATH"
+    mkdir -p .run
+    scripts/run.sh --qemu "$QEMU_BIN" --env qemu-headless-extradio-gpsd >.run/smoke-run.log 2>&1 &
+    RUNPID=$!
+    MARK='CLIENT STARTED|Console started on port 2323'
+    booted=0
+    for _ in $(seq 1 150); do
+      UART="$(readlink -f .run/uart-latest.log 2>/dev/null || true)"
+      if [ -n "$UART" ] && [ -f "$UART" ] && grep -qE "$MARK" "$UART"; then booted=1; break; fi
+      if ! kill -0 "$RUNPID" 2>/dev/null; then echo "run.sh exited early"; break; fi
+      sleep 4
+    done
+    if [ "$booted" != "1" ]; then
+      echo "=== UART tail ==="; tail -60 "${UART:-/dev/null}" 2>/dev/null || true
+      echo "=== run log ==="; tail -20 .run/smoke-run.log 2>/dev/null || true
+      scripts/stop.sh >/dev/null 2>&1 || true
+      echo "FAIL: firmware did not reach the boot marker" >&2; exit 7
+    fi
+    echo "SMOKE: boot marker seen"
+    web=0
+    for _ in $(seq 1 30); do
+      code="$(curl -s -o .run/web.html -w '%{http_code}' --max-time 3 http://127.0.0.1:18083/ 2>/dev/null || true)"
+      if [ "$code" = "200" ] && grep -qiE 'meshcom|<html|<!doctype' .run/web.html; then
+        web=1; echo "web GUI 200 ($(wc -c <.run/web.html) bytes)"; break
+      fi
+      sleep 2
+    done
+    scripts/stop.sh >/dev/null 2>&1 || true
+    if [ "$web" != "1" ]; then echo "FAIL: meshcom web GUI not reachable on :18083" >&2; exit 8; fi
+    echo "SMOKE: PASS (meshcom boots + web GUI reachable on :18083)"
+  )
 fi
 
 echo "==> Runtime deps (qemu + bridge)"
