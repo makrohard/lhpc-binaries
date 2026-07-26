@@ -31,9 +31,6 @@ COMMIT="${SOURCE_COMMIT:-$D_PIN}"
 echo "daemon   : $D_REMOTE @ $COMMIT -> $D_PATH"
 echo "radiolib : $R_REMOTE @ $R_PIN -> $R_PATH"
 
-echo "==> Build toolchain"
-apt-get install -y --no-install-recommends build-essential cmake >/dev/null
-
 echo "==> Clone sources"
 git clone --quiet "$R_REMOTE" "$ROOT/$R_PATH"
 git -C "$ROOT/$R_PATH" -c advice.detachedHead=false checkout --quiet "$R_PIN"
