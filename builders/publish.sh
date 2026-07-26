@@ -81,6 +81,8 @@ try:
             # "../../src/evil" into "src/evil" and erasing the traversal we mean to catch.
             raw = m.name
             name = raw[2:] if raw.startswith("./") else raw
+            if name in ("", "."):
+                continue                      # the archive root itself ("." / "./")
             if raw.startswith("/") or ".." in raw.split("/") or ".." in name.split("/"):
                 sys.exit(f"FAIL: escaping tar member {raw!r}")
             if name in seen_names:
