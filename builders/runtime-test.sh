@@ -54,6 +54,27 @@ echo "ELF binaries in artifact: ${#ELFS[@]}"
 [ "${#ELFS[@]}" -gt 0 ] || { echo "FAIL: no ELF binaries found in artifact" >&2; exit 3; }
 ldd_closure_check "$STACK-clean" "${ELFS[@]}"
 
+echo "==> Every resolved library must come from runtime_deps or the documented base image"
+# The harness itself installs curl/git/python3/file/procps and their libraries. Without this
+# check a MISSING declared dependency can be silently satisfied by a harness package, and the
+# artifact then fails on a real Pi that installed only runtime_deps (audit finding).
+BASE_ALLOW="libc6 libgcc-s1 libstdc++6 zlib1g libzstd1 liblzma5 libbz2-1.0 libselinux1 libpcre2-8-0"
+bad=0
+for elf in "${ELFS[@]}"; do
+  while read -r so; do
+    [ -n "$so" ] || continue
+    pkg="$(dpkg -S "$(readlink -f "$so" 2>/dev/null || echo "$so")" 2>/dev/null | cut -d: -f1 | head -1)"
+    [ -n "$pkg" ] || { echo "FAIL: $so is owned by no package" >&2; bad=1; continue; }
+    case " $DEPS $BASE_ALLOW " in
+      *" $pkg "*) ;;
+      *) echo "FAIL: $elf needs $pkg (via $so), which is NOT in runtime_deps — it was only" >&2
+         echo "      present because the TEST HARNESS installed it." >&2; bad=1 ;;
+    esac
+  done < <(ldd "$elf" 2>/dev/null | grep -oE '/[^ ]+\.so[.0-9]*' | sort -u)
+done
+[ "$bad" -eq 0 ] || exit 9
+echo "runtime_deps closure: complete"
+
 if [ "${SMOKE_TEST:-true}" = "false" ]; then
   echo "RUNTIME-TEST: extraction + ELF closure OK; smoke skipped (diagnostic build)"
   exit 0

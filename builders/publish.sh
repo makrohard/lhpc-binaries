@@ -64,17 +64,41 @@ if os.path.getsize(tar_path) != d["size"]:
     sys.exit("FAIL: recomputed size differs from fragment")
 
 # Member validation: regular files/dirs only, relative, no '..', sane top-level prefixes.
+MAX_MEMBERS = 20000
+MAX_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 zstd = subprocess.Popen(["zstd", "-dc", tar_path], stdout=subprocess.PIPE)
-with tarfile.open(fileobj=zstd.stdout, mode="r|") as tf:
-    for m in tf:
-        if not (m.isreg() or m.isdir()):
-            sys.exit(f"FAIL: non-regular tar member {m.name!r} ({m.type!r})")
-        name = m.name.lstrip("./")
-        if name.startswith("/") or ".." in name.split("/"):
-            sys.exit(f"FAIL: escaping tar member {m.name!r}")
-        if name and name.split("/")[0] not in ("src", "build"):
-            sys.exit(f"FAIL: unexpected top-level member {m.name!r}")
-if zstd.wait() != 0:
+seen_names, members, total = set(), 0, 0
+try:
+    with tarfile.open(fileobj=zstd.stdout, mode="r|") as tf:
+        for m in tf:
+            members += 1
+            if members > MAX_MEMBERS:
+                sys.exit(f"FAIL: archive exceeds {MAX_MEMBERS} members")
+            if not (m.isreg() or m.isdir()):
+                sys.exit(f"FAIL: non-regular tar member {m.name!r} ({m.type!r})")
+            # LITERAL prefix strip: `lstrip("./")` removes a CHARACTER SET, turning
+            # "../../src/evil" into "src/evil" and erasing the traversal we mean to catch.
+            raw = m.name
+            name = raw[2:] if raw.startswith("./") else raw
+            if raw.startswith("/") or ".." in raw.split("/") or ".." in name.split("/"):
+                sys.exit(f"FAIL: escaping tar member {raw!r}")
+            if name in seen_names:
+                sys.exit(f"FAIL: duplicate tar member {raw!r}")
+            seen_names.add(name)
+            if name and name.split("/")[0] not in ("src", "build"):
+                sys.exit(f"FAIL: unexpected top-level member {raw!r}")
+            if m.isreg():
+                if m.size > MAX_MEMBER_BYTES:
+                    sys.exit(f"FAIL: member {raw!r} expands to {m.size} bytes")
+                total += m.size
+                if total > MAX_TOTAL_BYTES:
+                    sys.exit(f"FAIL: archive expands beyond {MAX_TOTAL_BYTES} bytes")
+finally:
+    if zstd.stdout:
+        zstd.stdout.close()
+    zstd.wait()
+if zstd.returncode != 0:
     sys.exit("FAIL: zstd decompression failed")
 prov = os.path.join(out, f"{d['stack']}.provenance.txt")
 if not os.path.isfile(prov):
@@ -137,15 +161,41 @@ if have_index:
     if raw.returncode != 0:
         sys.exit("FAIL: cannot download current index.json")
     idx = json.loads(raw.stdout)          # malformed JSON => hard fail (exception)
-    if idx.get("schema") != 2:
-        # One-time migration from the legacy v1 index: start a fresh v2 index. The old
-        # fixed-name assets remain downloadable but are no longer indexed (superseded).
-        print("legacy index detected — starting a fresh schema-2 index", file=sys.stderr)
-        idx = {"schema": 2, "stacks": {}}
+    schema = idx.get("schema") if isinstance(idx, dict) else None
+    if schema != 2:
+        # EXACTLY the one-time v1 migration is allowed (a v1 index has no "schema" key and a
+        # flat {stack: {...}} shape). Any OTHER schema is unknown — fail without uploading
+        # anything, rather than silently discarding published entries.
+        if schema is None and isinstance(idx, dict) and "stacks" not in idx:
+            print("legacy v1 index — starting a fresh schema-2 index", file=sys.stderr)
+            idx = {"schema": 2, "stacks": {}}
+        else:
+            sys.exit(f"FAIL: unknown index schema {schema!r} — refusing to publish")
+    if not isinstance(idx.get("stacks"), dict):
+        sys.exit("FAIL: index has no stacks table — refusing to publish")
+    # Revalidate every PRESERVED entry with the same rules the new fragment passed: a
+    # corrupted neighbour must not ride along into the new index.
+    import re as _re
     for sid, e in idx["stacks"].items():
-        for k in ("filename", "sha256", "size", "components", "url", "smoke"):
+        if not isinstance(e, dict):
+            sys.exit(f"FAIL: existing index entry {sid!r} is not an object")
+        for k in ("filename", "sha256", "size", "components", "url", "smoke", "built_from",
+                  "target", "runtime_deps", "extract_to"):
             if k not in e:
-                sys.exit(f"FAIL: existing index entry {sid!r} invalid — refusing to proceed")
+                sys.exit(f"FAIL: existing index entry {sid!r} lacks {k!r}")
+        if not _re.fullmatch(r"[0-9a-f]{64}", str(e["sha256"])):
+            sys.exit(f"FAIL: existing index entry {sid!r} has a malformed sha256")
+        if e["filename"] != f"{sid}-{e['sha256']}.tar.zst":
+            sys.exit(f"FAIL: existing index entry {sid!r} is not content-addressed")
+        if not isinstance(e["size"], int) or e["size"] <= 0:
+            sys.exit(f"FAIL: existing index entry {sid!r} has an invalid size")
+        if not isinstance(e["components"], dict) or not all(
+                _re.fullmatch(r"[0-9a-f]{40}", str(v)) for v in e["components"].values()):
+            sys.exit(f"FAIL: existing index entry {sid!r} has an invalid components map")
+        if e["smoke"] != {"mode": "mandatory", "result": "passed"}:
+            sys.exit(f"FAIL: existing index entry {sid!r} did not pass a mandatory smoke test")
+        if not str(e["url"]).startswith("https://"):
+            sys.exit(f"FAIL: existing index entry {sid!r} has a non-HTTPS url")
 else:
     idx = {"schema": 2, "stacks": {}}
 
