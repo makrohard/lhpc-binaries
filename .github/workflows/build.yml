@@ -54,3 +54,9 @@ jobs:
             -e LHPC_REF="${{ github.event.inputs.lhpc_ref }}" \
             -v "$PWD:/work" -w /work \
             debian:trixie bash builders/build.sh
+
+      - name: Publish (rolling release + index.json)
+        if: hashFiles('dist/*.tar.zst') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash builders/publish.sh
