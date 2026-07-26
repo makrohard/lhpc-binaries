@@ -37,6 +37,14 @@ echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive.asc] http://archive
 apt-get update -qq
 
 echo "==> Install lhpc — EXACT ref resolution, no fallback (${LHPC_REF:-main})"
+# PUBLISHING builds (smoke gate armed) require an IMMUTABLE recipe: a full 40-hex
+# loraham-pi-control commit SHA. Branch/tag refs are allowed only for smoke_test=false
+# diagnostic builds, which can never enter the release.
+if [ "${SMOKE_TEST:-true}" != "false" ] && ! [[ "${LHPC_REF:-main}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "FAIL: publishing builds require an exact loraham-pi-control commit SHA as lhpc_ref" >&2
+  echo "      (got '${LHPC_REF:-main}'). Use smoke_test=false for diagnostic branch builds." >&2
+  exit 4
+fi
 # Any branch, tag or full SHA resolves through one honest path: fetch the requested ref, detach
 # at the RESOLVED commit, assert, print, and RECORD it in the fragment. A typo or unknown ref
 # FAILS the build — it can never silently become default main.
