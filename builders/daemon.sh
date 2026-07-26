@@ -54,8 +54,13 @@ echo "==> Smoke test"
   || echo "(binary has no --help/--version; skipping smoke — non-fatal)"
 
 echo "==> Runtime deps (ldd -> dpkg -S)"
-mapfile -t DEPS < <(ldd "$BIN" | awk '/=>/{print $3}' | grep -E '^/' | sort -u \
-  | while read -r so; do dpkg -S "$so" 2>/dev/null | cut -d: -f1; done | sort -u)
+echo "--- raw ldd ---"; ldd "$BIN" 2>&1 | sed -n '1,25p' || true
+mapfile -t DEPS < <(
+  ldd "$BIN" 2>/dev/null | grep -oE '/[^ ]+\.so[.0-9]*' | sort -u \
+  | while read -r so; do
+      dpkg -S "$(readlink -f "$so" 2>/dev/null || echo "$so")" 2>/dev/null | cut -d: -f1
+    done | sort -u
+)
 printf 'runtime_deps: %s\n' "${DEPS[*]:-<none>}"
 # Graphics denylist — a headless daemon must never pull these.
 if printf '%s\n' "${DEPS[@]:-}" | grep -qiE 'libx11|libsdl|libgtk|mesa|libgl1|wayland|pulse|libxcb'; then
