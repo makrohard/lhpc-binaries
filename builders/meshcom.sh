@@ -54,6 +54,15 @@ BRIDGE="$ROOT/$B_PATH/build/meshcom-loraham-bridge"
 file "$QEMU_BIN"; file "$BRIDGE"; ls -la "$FLASH"
 "$QEMU_BIN" --version 2>&1 | head -1 || true
 
+if [ "${SMOKE_BOOT:-}" = "true" ]; then
+  echo "==> Smoke boot: boot the built firmware under the built qemu; require the UART boot marker"
+  # scripts/test.sh is meshcom-qemu-raspi's own boot test: it self-boots the newest built flash.bin via
+  # run.sh (forwarding --qemu), then PASSES only on a FRESH 'CLIENT STARTED'/'Console started' UART marker
+  # in this run's log (web UI is diagnostic-only). Runs entirely in-container — no hardware, no host box.
+  ( cd "$ROOT/$Q_PATH" && timeout 600 scripts/test.sh --qemu "$QEMU_BIN" )
+  echo "SMOKE BOOT: PASS — firmware reached the boot marker under the built qemu"
+fi
+
 echo "==> Runtime deps (qemu + bridge)"
 deps_of() {
   ldd "$1" 2>/dev/null | grep -oE '/[^ ]+\.so[.0-9]*' | sort -u \
