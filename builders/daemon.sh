@@ -48,6 +48,5 @@ ldd_closure_check daemon "$BIN"
 echo "==> Pack (tar.zst; extracts relative to the runtime root)"
 STAGE="$(mktemp -d)"
 install -D "$BIN" "$STAGE/$D_PATH/loraham_daemon/loraham_daemon"
-COMPONENTS="{\"loraham-daemon\": \"$COMMIT\", \"radiolib\": \"$R_PIN\"}"
-pack_and_fragment daemon "$STAGE" "$COMMIT" "$COMPONENTS" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
+pack_and_fragment daemon "$STAGE" "$COMMIT" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
 write_provenance daemon

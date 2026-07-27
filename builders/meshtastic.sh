@@ -49,6 +49,5 @@ mkdir -p "$STAGE/build/tools/meshtasticd"
 cp -a "$ROOT/build/tools/meshtasticd/." "$STAGE/build/tools/meshtasticd/"
 MK="$ROOT/$M_PATH/.lhpc-build-complete"
 [ -f "$MK" ] && install -D "$MK" "$STAGE/$M_PATH/.lhpc-build-complete" || true
-COMPONENTS="{\"meshtastic\": \"$COMMIT\"}"
-pack_and_fragment meshtastic "$STAGE" "$COMMIT" "$COMPONENTS" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
+pack_and_fragment meshtastic "$STAGE" "$COMMIT" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
 write_provenance meshtastic
