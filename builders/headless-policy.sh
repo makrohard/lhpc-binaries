@@ -7,7 +7,10 @@
 # Sourced by the stack builders (build stage) AND runtime-test.sh (clean-runtime stage), so the
 # policy can never drift between the two.
 
-_HEADLESS_DENY='libx11|libsdl|libgtk|mesa|libgl1|wayland|pulse|libxcb'
+# Mirrors loraham-pi-control lhpc/core/deps.py `_DENY_RE` (the authoritative headless installation
+# guard) plus Qt and PipeWire; keep in sync with it. Matched case-insensitively against package
+# NAMES (unanchored, so a variant like libgl1-mesa-glx is caught too).
+_HEADLESS_DENY='libgtk-|libgdk-|python3-tk|tk[0-9]|libsdl|libx11|libxcb|libxext|libxrandr|libxcursor|libxi[0-9]|libxfixes|libxss|xserver-|xwayland|x11-common|xauth|libwayland-|wayland|libgbm|libdrm|libegl|libgl[0-9x]|mesa-|libllvm|libpulse|libasound|libinput|libxkbcommon|adwaita-|gnome-|kde-|xfce4|lxde|cups|fonts-|libqt|qt[0-9]|qtbase|pipewire|libpipewire|libspa-'
 
 headless_deps_check() {
   local name="$1"; shift
