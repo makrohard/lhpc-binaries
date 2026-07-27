@@ -155,8 +155,6 @@ if "index.json" in names.stdout.split():
     idx, err = load_index(json.loads(raw.stdout))   # malformed JSON => hard fail (exception)
     if err:
         sys.exit("FAIL: " + err + " -- refusing to publish")
-    if not idx["stacks"]:
-        print("legacy v1 index -- starting a fresh schema-2 index", file=sys.stderr)
 else:
     idx = {"schema": SCHEMA, "stacks": {}}
 

@@ -65,26 +65,17 @@ def validate_entry(sid, e):
 def load_index(raw_obj):
     """Validate a decoded current index and return (index, error).
 
-    A v1 index is migrated ONLY when it is positively identified as one: a mapping whose every
-    value looks like a v1 stack entry. Anything else unrecognised is an error — a transient or
-    unexpected shape must never be silently rewritten into an empty index, which would drop
-    every other stack's published entry.
+    STRICT: only a schema-2 index with a stacks table is accepted. There is no v1 migration —
+    the published index has been schema 2 since the first release, and a "looks like v1" rule
+    accepted shapes nobody could positively identify (an empty object, or any mapping whose
+    values merely carry string `filename`/`sha256` fields) and then replaced the index with an
+    empty one, erasing every preserved stack. A missing index.json asset is handled by the
+    caller; anything present but unrecognised is a hard failure.
     """
     if not isinstance(raw_obj, dict):
         return None, "index is not an object"
-    schema = raw_obj.get("schema")
-    if schema == SCHEMA:
-        if not isinstance(raw_obj.get("stacks"), dict):
-            return None, "index has no stacks table"
-        return raw_obj, ""
-    if schema is not None:
-        return None, f"unknown index schema {schema!r}"
-    if "stacks" in raw_obj:
-        return None, "index has no schema but carries a stacks table — unrecognised"
-    if not raw_obj:
-        return {"schema": SCHEMA, "stacks": {}}, ""
-    for sid, v in raw_obj.items():
-        if not (re.fullmatch(r"[a-z0-9-]+", str(sid)) and isinstance(v, dict)
-                and isinstance(v.get("filename"), str) and isinstance(v.get("sha256"), str)):
-            return None, "index matches neither schema 2 nor the v1 layout"
-    return {"schema": SCHEMA, "stacks": {}}, ""      # identified v1: start a fresh v2 index
+    if raw_obj.get("schema") != SCHEMA:
+        return None, f"unknown index schema {raw_obj.get('schema')!r}"
+    if not isinstance(raw_obj.get("stacks"), dict):
+        return None, "index has no stacks table"
+    return raw_obj, ""
