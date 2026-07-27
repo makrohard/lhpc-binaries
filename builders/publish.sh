@@ -19,36 +19,22 @@ FRAG="${frags[0]}"
 
 echo "==> Validate the fragment + artifact (nothing from the build job is trusted)"
 python3 - "$FRAG" "$OUT" <<'PY'
-import hashlib, json, os, re, subprocess, sys, tarfile
+import hashlib, json, os, subprocess, sys, tarfile
+sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
+from lib_index import validate_entry            # THE one entry validator (used again at merge)
+
 frag_path, out = sys.argv[1], sys.argv[2]
 d = json.load(open(frag_path))
-
-REQ = {"stack": str, "filename": str, "sha256": str, "size": int, "built_from": str,
-       "components": dict, "lhpc_commit": str, "builder_commit": str, "target": str,
-       "os": str, "container_digest": str, "runtime_deps": list, "smoke": dict,
-       "extract_to": str}
-for k, t in REQ.items():
-    if not isinstance(d.get(k), t):
-        sys.exit(f"FAIL: fragment field {k!r} missing or wrong type")
-if not re.fullmatch(r"[a-z0-9-]+", d["stack"]):
-    sys.exit("FAIL: bad stack id")
-if d["extract_to"] != "runtime-root" or d["target"] != "aarch64-trixie":
-    sys.exit("FAIL: unexpected target/extract_to")
-if not re.fullmatch(r"[0-9a-f]{64}", d["sha256"]):
-    sys.exit("FAIL: bad sha256 format")
-if d["filename"] != f"{d['stack']}-{d['sha256']}.tar.zst":
-    sys.exit("FAIL: filename is not the content-addressed form")
-for cid, commit in d["components"].items():
-    if not re.fullmatch(r"[a-z0-9-]+", cid) or not re.fullmatch(r"[0-9a-f]{40}", str(commit)):
-        sys.exit(f"FAIL: bad components entry {cid!r}")
-if not re.fullmatch(r"[0-9a-f]{40}", d["lhpc_commit"]):
-    sys.exit("FAIL: bad lhpc_commit")
-for p in d["runtime_deps"]:
-    if not re.fullmatch(r"[A-Za-z0-9.+-]+", p):
-        sys.exit(f"FAIL: suspicious runtime dep {p!r}")
-# THE publication gate: only a mandatory, passed smoke may enter the release.
-if d["smoke"] != {"mode": "mandatory", "result": "passed"}:
-    sys.exit(f"FAIL: smoke gate not satisfied: {d['smoke']!r} — diagnostic builds are never published")
+if not isinstance(d.get("stack"), str):
+    sys.exit("FAIL: fragment has no stack id")
+# A fragment IS an index entry plus its stack id and minus the url (added at merge time):
+# validate it with EXACTLY the rules every preserved entry must satisfy — one rule set, one
+# implementation (two similar validators drift, and the weaker one decides; audit finding).
+probe = {k: v for k, v in d.items() if k != "stack"}
+probe["url"] = "https://example.invalid/" + str(d.get("filename", ""))
+err = validate_entry(d["stack"], probe)
+if err:
+    sys.exit("FAIL: " + err)
 
 tar_path = os.path.join(out, d["filename"])
 if not os.path.isfile(tar_path):
@@ -136,11 +122,14 @@ echo "uploaded asset verified"
 
 echo "==> Merge into index.json (authenticated read, fail-hard) + SHA256SUMS; index uploaded LAST"
 python3 - "$REPO" "$REL" "$FRAG" <<'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys
+sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
+from lib_index import SCHEMA, load_index, validate_entry
+
 repo, rel, frag_path = sys.argv[1], sys.argv[2], sys.argv[3]
 frag = json.load(open(frag_path))
 stack = frag.pop("stack")
-frag["url"] = f"https://github.com/{repo}/releases/download/{rel}/{frag['filename']}"
+frag["url"] = "https://github.com/%s/releases/download/%s/%s" % (repo, rel, frag["filename"])
 
 # Read the CURRENT index through the authenticated API. ONLY a positively identified missing
 # index counts as empty — any network/JSON/schema error is fatal (a transient failure must
@@ -149,64 +138,44 @@ names = subprocess.run(
     ["gh", "release", "view", rel, "--json", "assets", "--jq", ".assets[].name"],
     capture_output=True, text=True)
 if names.returncode != 0:
-    sys.exit(f"FAIL: cannot list release assets: {names.stderr.strip()}")
-have_index = "index.json" in names.stdout.split()
-if have_index:
+    sys.exit("FAIL: cannot list release assets: " + names.stderr.strip())
+if "index.json" in names.stdout.split():
     got = subprocess.run(
-        ["gh", "api", f"repos/{repo}/releases/tags/{rel}"], capture_output=True, text=True)
+        ["gh", "api", "repos/%s/releases/tags/%s" % (repo, rel)],
+        capture_output=True, text=True)
     if got.returncode != 0:
         sys.exit("FAIL: cannot read release via API")
-    asset_id = next(a["id"] for a in json.loads(got.stdout)["assets"] if a["name"] == "index.json")
+    asset_id = next(a["id"] for a in json.loads(got.stdout)["assets"]
+                    if a["name"] == "index.json")
     raw = subprocess.run(
         ["gh", "api", "-H", "Accept: application/octet-stream",
-         f"repos/{repo}/releases/assets/{asset_id}"], capture_output=True)
+         "repos/%s/releases/assets/%s" % (repo, asset_id)], capture_output=True)
     if raw.returncode != 0:
         sys.exit("FAIL: cannot download current index.json")
-    idx = json.loads(raw.stdout)          # malformed JSON => hard fail (exception)
-    schema = idx.get("schema") if isinstance(idx, dict) else None
-    if schema != 2:
-        # EXACTLY the one-time v1 migration is allowed (a v1 index has no "schema" key and a
-        # flat {stack: {...}} shape). Any OTHER schema is unknown — fail without uploading
-        # anything, rather than silently discarding published entries.
-        if schema is None and isinstance(idx, dict) and "stacks" not in idx:
-            print("legacy v1 index — starting a fresh schema-2 index", file=sys.stderr)
-            idx = {"schema": 2, "stacks": {}}
-        else:
-            sys.exit(f"FAIL: unknown index schema {schema!r} — refusing to publish")
-    if not isinstance(idx.get("stacks"), dict):
-        sys.exit("FAIL: index has no stacks table — refusing to publish")
-    # Revalidate every PRESERVED entry with the same rules the new fragment passed: a
-    # corrupted neighbour must not ride along into the new index.
-    import re as _re
-    for sid, e in idx["stacks"].items():
-        if not isinstance(e, dict):
-            sys.exit(f"FAIL: existing index entry {sid!r} is not an object")
-        for k in ("filename", "sha256", "size", "components", "url", "smoke", "built_from",
-                  "target", "runtime_deps", "extract_to"):
-            if k not in e:
-                sys.exit(f"FAIL: existing index entry {sid!r} lacks {k!r}")
-        if not _re.fullmatch(r"[0-9a-f]{64}", str(e["sha256"])):
-            sys.exit(f"FAIL: existing index entry {sid!r} has a malformed sha256")
-        if e["filename"] != f"{sid}-{e['sha256']}.tar.zst":
-            sys.exit(f"FAIL: existing index entry {sid!r} is not content-addressed")
-        if not isinstance(e["size"], int) or e["size"] <= 0:
-            sys.exit(f"FAIL: existing index entry {sid!r} has an invalid size")
-        if not isinstance(e["components"], dict) or not all(
-                _re.fullmatch(r"[0-9a-f]{40}", str(v)) for v in e["components"].values()):
-            sys.exit(f"FAIL: existing index entry {sid!r} has an invalid components map")
-        if e["smoke"] != {"mode": "mandatory", "result": "passed"}:
-            sys.exit(f"FAIL: existing index entry {sid!r} did not pass a mandatory smoke test")
-        if not str(e["url"]).startswith("https://"):
-            sys.exit(f"FAIL: existing index entry {sid!r} has a non-HTTPS url")
+    idx, err = load_index(json.loads(raw.stdout))   # malformed JSON => hard fail (exception)
+    if err:
+        sys.exit("FAIL: " + err + " -- refusing to publish")
+    if not idx["stacks"]:
+        print("legacy v1 index -- starting a fresh schema-2 index", file=sys.stderr)
 else:
-    idx = {"schema": 2, "stacks": {}}
+    idx = {"schema": SCHEMA, "stacks": {}}
+
+# Revalidate every PRESERVED entry with the SAME rules the new one passes: a corrupted
+# neighbour must not ride along into the new index.
+for sid, e in sorted(idx["stacks"].items()):
+    err = validate_entry(sid, e)
+    if err:
+        sys.exit("FAIL: existing " + err + " -- refusing to publish")
+err = validate_entry(stack, frag)
+if err:
+    sys.exit("FAIL: " + err)
 
 idx["stacks"][stack] = frag
 json.dump(idx, open("dist-index.json", "w"), indent=2, sort_keys=True)
 with open("dist-SHA256SUMS", "w") as fh:
     for sid in sorted(idx["stacks"]):
         e = idx["stacks"][sid]
-        fh.write(f"{e['sha256']}  {e['filename']}\n")
+        fh.write(e["sha256"] + "  " + e["filename"] + "\n")
 print(json.dumps(idx, indent=2))
 PY
 mv dist-index.json index.json
