@@ -9,6 +9,10 @@ set -euo pipefail
 STACK="${STACK:?}"
 FRAG="/out/${STACK}.frag.json"
 [ -f "$FRAG" ] || { echo "FAIL: fragment $FRAG missing" >&2; exit 2; }
+# Bind the fragment's internal stack to the trusted dispatched $STACK (audit: this job used $STACK
+# for the path but then read the fragment's own fields — a mismatched stack must fail here).
+FSTACK="$(sed -n 's/.*"stack"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$FRAG" | head -1)"
+[ "$FSTACK" = "$STACK" ] || { echo "FAIL: fragment stack '$FSTACK' != dispatched '$STACK'" >&2; exit 2; }
 
 echo "==> Harness tooling (test mechanics only — NOT the artifact's runtime deps)"
 export DEBIAN_FRONTEND=noninteractive

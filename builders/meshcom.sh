@@ -66,6 +66,5 @@ cp -a "$FLASH_DIR"/*.bin "$STAGE/$FREL/"
 # bridge binary
 install -D "$BRIDGE" "$STAGE/$B_PATH/build/meshcom-loraham-bridge"
 
-COMPONENTS="{\"meshcom-qemu\": \"$COMMIT\", \"meshcom-bridge\": \"$B_PIN\"}"
-pack_and_fragment meshcom "$STAGE" "$COMMIT" "$COMPONENTS" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
+pack_and_fragment meshcom "$STAGE" "$COMMIT" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
 write_provenance meshcom

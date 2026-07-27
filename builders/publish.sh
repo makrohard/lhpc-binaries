@@ -17,16 +17,62 @@ frags=("$OUT"/*.frag.json)
 [ ${#frags[@]} -eq 1 ] || { echo "FAIL: expected exactly one fragment, got ${#frags[@]}" >&2; exit 2; }
 FRAG="${frags[0]}"
 
+# TRUSTED workflow context (the fragment/tarball are written by the UNTRUSTED build container and a
+# background process there could rewrite them; every security-sensitive field is bound to these).
+EXPECTED_STACK="${EXPECTED_STACK:?}"
+EXPECTED_BUILDER_COMMIT="${EXPECTED_BUILDER_COMMIT:?}"
+EXPECTED_LHPC_COMMIT="${EXPECTED_LHPC_COMMIT:?}"
+EXPECTED_CONTAINER_DIGEST="${EXPECTED_CONTAINER_DIGEST:?}"
+SOURCE_COMMIT="${SOURCE_COMMIT:-}"
+[[ "$EXPECTED_LHPC_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: EXPECTED_LHPC_COMMIT is not a 40-hex sha" >&2; exit 4; }
+
+echo "==> Independently re-derive built_from + components from lhpc@${EXPECTED_LHPC_COMMIT} (trusted)"
+LHPC_SRC="$(mktemp -d)"
+git clone --quiet --no-checkout https://github.com/makrohard/loraham-pi-control.git "$LHPC_SRC/lhpc"
+git -C "$LHPC_SRC/lhpc" fetch --quiet origin "$EXPECTED_LHPC_COMMIT"
+git -C "$LHPC_SRC/lhpc" -c advice.detachedHead=false checkout --quiet "$EXPECTED_LHPC_COMMIT"
+python3 -m venv "$LHPC_SRC/venv"
+"$LHPC_SRC/venv/bin/pip" install --quiet --upgrade pip >/dev/null
+"$LHPC_SRC/venv/bin/pip" install --quiet "$LHPC_SRC/lhpc" >/dev/null
+read -r EXPECTED_BUILT_FROM EXPECTED_COMPONENTS < <(
+  BUILDERS_DIR="${BUILDERS_DIR:-builders}" "$LHPC_SRC/venv/bin/python" - "$EXPECTED_STACK" "$SOURCE_COMMIT" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
+from lib_provenance import derive
+bf, comps = derive(sys.argv[1], sys.argv[2])
+print(bf, json.dumps(comps, sort_keys=True, separators=(",", ":")))
+PY
+)
+[ -n "$EXPECTED_BUILT_FROM" ] && [ -n "$EXPECTED_COMPONENTS" ] || { echo "FAIL: provenance re-derivation failed" >&2; exit 4; }
+export EXPECTED_STACK EXPECTED_BUILDER_COMMIT EXPECTED_LHPC_COMMIT EXPECTED_CONTAINER_DIGEST \
+       EXPECTED_BUILT_FROM EXPECTED_COMPONENTS
+echo "expected: stack=${EXPECTED_STACK} built_from=${EXPECTED_BUILT_FROM} components=${EXPECTED_COMPONENTS}"
+
 echo "==> Validate the fragment + artifact (nothing from the build job is trusted)"
 python3 - "$FRAG" "$OUT" <<'PY'
 import hashlib, json, os, subprocess, sys, tarfile
 sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
-from lib_index import validate_entry            # THE one entry validator (used again at merge)
+from lib_index import validate_entry, path_allowed   # THE one entry validator + extraction scope
 
 frag_path, out = sys.argv[1], sys.argv[2]
 d = json.load(open(frag_path))
 if not isinstance(d.get("stack"), str):
     sys.exit("FAIL: fragment has no stack id")
+
+# BIND every security-sensitive claim to TRUSTED context — the fragment is untrusted output.
+EXP_STACK = os.environ["EXPECTED_STACK"]
+if d["stack"] != EXP_STACK:
+    sys.exit(f"FAIL: fragment stack {d['stack']!r} != dispatched {EXP_STACK!r}")
+_binds = {"builder_commit": os.environ["EXPECTED_BUILDER_COMMIT"],
+          "lhpc_commit": os.environ["EXPECTED_LHPC_COMMIT"],
+          "container_digest": os.environ["EXPECTED_CONTAINER_DIGEST"],
+          "built_from": os.environ["EXPECTED_BUILT_FROM"]}
+for k, v in _binds.items():
+    if str(d.get(k)) != v:
+        sys.exit(f"FAIL: fragment {k}={d.get(k)!r} != trusted {v!r}")
+if d.get("components") != json.loads(os.environ["EXPECTED_COMPONENTS"]):
+    sys.exit(f"FAIL: fragment components != trusted re-derivation {os.environ['EXPECTED_COMPONENTS']}")
+
 # A fragment IS an index entry plus its stack id and minus the url (added at merge time):
 # validate it with EXACTLY the rules every preserved entry must satisfy — one rule set, one
 # implementation (two similar validators drift, and the weaker one decides; audit finding).
@@ -74,8 +120,10 @@ try:
             if name in seen_names:
                 sys.exit(f"FAIL: duplicate tar member {raw!r}")
             seen_names.add(name)
-            if name and name.split("/")[0] not in ("src", "build"):
-                sys.exit(f"FAIL: unexpected top-level member {raw!r}")
+            # PER-STACK extraction scope: an artifact may only carry files within its own stack's
+            # trees — never another stack's paths (which it would overwrite in the shared root).
+            if name and not path_allowed(name, m.isdir(), EXP_STACK):
+                sys.exit(f"FAIL: member {raw!r} outside {EXP_STACK} extraction scope")
             if m.isreg():
                 if m.size > MAX_MEMBER_BYTES:
                     sys.exit(f"FAIL: member {raw!r} expands to {m.size} bytes")
@@ -135,6 +183,8 @@ from lib_index import SCHEMA, load_index, validate_entry
 repo, rel, frag_path = sys.argv[1], sys.argv[2], sys.argv[3]
 frag = json.load(open(frag_path))
 stack = frag.pop("stack")
+if stack != os.environ["EXPECTED_STACK"]:      # bound in the validator too; enforce again here
+    sys.exit("FAIL: fragment stack != dispatched stack")
 frag["url"] = "https://github.com/%s/releases/download/%s/%s" % (repo, rel, frag["filename"])
 
 # Read the CURRENT index through the authenticated API. ONLY a positively identified missing

@@ -18,6 +18,30 @@ _FIELDS = {
 }
 _SMOKE_PASSED = {"mode": "mandatory", "result": "passed"}
 
+# Per-stack top-level path prefixes an artifact may contain. An artifact must not carry files
+# outside its OWN stack's trees, or it could overwrite another stack's source/scripts/binaries in
+# the shared runtime root when extracted (audit: the broad src|build prefixes allowed cross-stack
+# writes). Prefixes end with "/".
+STACK_PATHS = {
+    "daemon": ("src/loraham-daemon/",),
+    "meshtastic": ("build/tools/meshtasticd/", "src/meshtastic-firmware/"),
+    "meshcom": ("build/tool-cache/qemu-xtensa/", "src/meshcom-qemu-raspi/",
+                "src/meshcom-loraham-bridge/"),
+}
+
+
+def path_allowed(name, isdir, stack):
+    """True if a tar member `name` is within `stack`'s allowed extraction scope (or is an ancestor
+    directory of an allowed prefix, e.g. the intermediate 'src/'). Unknown stack => nothing allowed."""
+    n = name.rstrip("/")
+    for p in STACK_PATHS.get(stack, ()):
+        pp = p.rstrip("/")
+        if n == pp or (n + "/").startswith(p):        # equal to, or under, an allowed prefix
+            return True
+        if isdir and p.startswith(n + "/"):           # an ancestor dir of an allowed prefix
+            return True
+    return False
+
 
 def validate_entry(sid, e):
     """Return an error string, or "" when the entry is publishable.
@@ -29,6 +53,11 @@ def validate_entry(sid, e):
         return f"bad stack id {sid!r}"
     if not isinstance(e, dict):
         return f"entry {sid!r} is not an object"
+    # STRICT shape: exactly the known fields, no unknowns (a tampered fragment must not smuggle
+    # extra keys past the validator; audit finding).
+    extra = set(e) - set(_FIELDS)
+    if extra:
+        return f"entry {sid!r}: unexpected field(s) {sorted(extra)}"
     for k, t in _FIELDS.items():
         if not isinstance(e.get(k), t):
             return f"entry {sid!r}: field {k!r} missing or not {t.__name__}"

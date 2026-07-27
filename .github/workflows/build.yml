@@ -144,4 +144,10 @@ jobs:
       - name: Validate + publish (content-addressed assets, index.json last)
         env:
           GH_TOKEN: ${{ github.token }}
+          # TRUSTED context the publisher binds the untrusted fragment to (P1).
+          EXPECTED_STACK: ${{ github.event.inputs.stack }}
+          EXPECTED_BUILDER_COMMIT: ${{ github.sha }}
+          EXPECTED_LHPC_COMMIT: ${{ github.event.inputs.lhpc_ref }}
+          EXPECTED_CONTAINER_DIGEST: ${{ env.CONTAINER_IMAGE }}
+          SOURCE_COMMIT: ${{ github.event.inputs.source_commit }}
         run: bash builders/publish.sh out

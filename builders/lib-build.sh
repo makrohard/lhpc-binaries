@@ -42,11 +42,11 @@ require_owned_deps() {
   fi
 }
 
-# pack_and_fragment <stack> <stage_dir> <principal_commit> <components_json> <smoke_mode> <smoke_result> <deps...>
+# pack_and_fragment <stack> <stage_dir> <principal_commit> <smoke_mode> <smoke_result> <deps...>
 # Packs the stage dir into a CONTENT-ADDRESSED tar.zst in $DIST and writes the v2 fragment.
 pack_and_fragment() {
-  local stack="$1" stage="$2" commit="$3" components="$4" smoke_mode="$5" smoke_result="$6"
-  shift 6
+  local stack="$1" stage="$2" commit="$3" smoke_mode="$4" smoke_result="$5"
+  shift 5
   local tmp="$DIST/.${stack}.tar.zst.tmp"
   tar --zstd -C "$stage" -cf "$tmp" .
   local sha size fname
@@ -54,6 +54,17 @@ pack_and_fragment() {
   size="$(stat -c %s "$tmp")"
   fname="${stack}-${sha}.tar.zst"
   mv "$tmp" "$DIST/$fname"
+  # `components` = the EXACT manifest composition (ALL source components), derived from the ONE
+  # provenance helper the trusted publisher also uses — so its independent re-derivation matches.
+  local components
+  components="$(BUILDERS_DIR="${BUILDERS_DIR:-/builders}" "$PY" - "$stack" "${SOURCE_COMMIT:-}" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.environ.get("BUILDERS_DIR", "/builders"))
+from lib_provenance import derive
+_, comps = derive(sys.argv[1], sys.argv[2])
+print(json.dumps(comps, sort_keys=True, separators=(",", ":")))
+PY
+)"
   local deps_json
   deps_json="$(printf '%s\n' "$@" | sed '/^$/d' | sed 's/.*/"&"/' | paste -sd, -)"
   cat > "$DIST/${stack}.frag.json" <<EOF
