@@ -29,8 +29,25 @@ DEPS="$(python3 -c "import json; print(' '.join(json.load(open('$FRAG'))['runtim
 echo "artifact: $FNAME"
 echo "declared runtime_deps: ${DEPS:-<none>}"
 
-echo "==> Install ONLY the declared runtime_deps"
+echo "==> Install ONLY the declared runtime_deps (+ audit the FULL installed delta)"
+source /builders/headless-policy.sh
+pkgset() { dpkg-query -W -f='${Package}\n' 2>/dev/null | sort -u; }
+before="$(pkgset)"
 [ -z "$DEPS" ] || apt-get install -y --no-install-recommends $DEPS >/dev/null
+mapfile -t DELTA < <(comm -13 <(printf '%s\n' "$before") <(pkgset))
+echo "packages added by runtime_deps: ${DELTA[*]:-<none>}"
+# The COMPLETE delta (runtime_deps + everything they transitively pulled) — not just the ldd-named
+# packages — must contain no GUI/audio and no compiler/development package. A runtime dep must never
+# drag a graphical, audio or build stack onto a Pi (audit: the name-only ldd scan missed packages
+# pulled transitively, or added by a tampered runtime_deps list).
+headless_deps_check "runtime-delta" "${DELTA[@]:-}" || exit 6
+_DEVRE='(-dev|-dbg)$|^(gcc|g\+\+|clang|cpp|make|cmake|ninja-build|binutils|pkg-config|autoconf|automake|libtool|libc6-dev|linux-libc-dev|build-essential)([:.+-]|$)'
+if printf '%s\n' "${DELTA[@]:-}" | grep -qE -- "$_DEVRE"; then
+  echo "FAIL: runtime install pulled a compiler/development package:" >&2
+  printf '%s\n' "${DELTA[@]:-}" | grep -E -- "$_DEVRE" >&2
+  exit 9
+fi
+echo "installed-delta policy: clean (no GUI/audio, no compiler/dev)"
 
 echo "==> Verify + extract into a clean runtime root"
 ROOT=/rt/root

@@ -97,6 +97,12 @@ PY
 STACK="$(python3 -c "import json,sys; print(json.load(open('$FRAG'))['stack'])")"
 FNAME="$(python3 -c "import json,sys; print(json.load(open('$FRAG'))['filename'])")"
 SHA="$(python3 -c "import json,sys; print(json.load(open('$FRAG'))['sha256'])")"
+
+echo "==> Re-apply the headless package policy in the trusted publisher"
+# A tampered runtime_deps list must not smuggle a graphics/audio package past the build gate.
+source "builders/headless-policy.sh"
+mapfile -t RTDEPS < <(python3 -c "import json; [print(p) for p in json.load(open('$FRAG'))['runtime_deps']]")
+headless_deps_check "publish:${STACK}" "${RTDEPS[@]:-}" || exit 6
 PROV_NAME="${STACK}-${SHA}.provenance.txt"
 cp "$OUT/${STACK}.provenance.txt" "$OUT/$PROV_NAME"
 
