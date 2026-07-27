@@ -112,6 +112,30 @@ smoke_meshcom() {
     if [ "$web" != "1" ]; then echo "FAIL: meshcom web GUI not reachable on :18083" >&2; exit 8; fi
     echo "SMOKE: PASS (meshcom boots + web GUI reachable on :18083)"
   )
+
+  # --- bridge: exec + STARTUP path (the packaged bridge was only existence+ldd checked before) ---
+  # `--backend fake` is the built-in bounded backend, so no real LoRaHAM daemon or MeshCom endpoint
+  # is needed: the bridge must execute (dynamic link OK), then actually come up and serve TCP.
+  local bridge="$ROOT/src/meshcom-loraham-bridge/build/meshcom-loraham-bridge"
+  [ -x "$bridge" ] || { echo "FAIL: bridge not at $bridge" >&2; exit 7; }
+  echo "bridge version: $("$bridge" --version 2>&1 | head -1)"
+  "$bridge" --version >/dev/null 2>&1 || { echo "FAIL: bridge --version did not exit 0" >&2; exit 7; }
+  local blog; blog="$(mktemp)"
+  "$bridge" --backend fake --bind 127.0.0.1 --port 7018 >"$blog" 2>&1 &
+  local bpid=$!
+  sleep 2
+  if ! kill -0 "$bpid" 2>/dev/null; then
+    echo "=== bridge log ==="; cat "$blog" >&2
+    echo "FAIL: bridge exited during startup" >&2; exit 7
+  fi
+  # It must be genuinely serving on its TCP port — bash /dev/tcp, no extra tooling.
+  if ! (exec 3<>/dev/tcp/127.0.0.1/7018) 2>/dev/null; then
+    kill -KILL "$bpid" 2>/dev/null || true
+    echo "=== bridge log ==="; cat "$blog" >&2
+    echo "FAIL: bridge not accepting TCP on :7018" >&2; exit 8
+  fi
+  kill -TERM "$bpid" 2>/dev/null; sleep 1; kill -KILL "$bpid" 2>/dev/null || true
+  echo "SMOKE: PASS (bridge starts with fake backend + serves TCP on :7018)"
 }
 
 case "$STACK" in
