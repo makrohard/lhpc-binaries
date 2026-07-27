@@ -30,9 +30,8 @@ on:
         required: false
         default: ""
       lhpc_ref:
-        description: "loraham-pi-control ref (branch/tag/SHA) — resolved EXACTLY, no fallback"
-        required: false
-        default: "main"
+        description: "loraham-pi-control ref — a PUBLISHING build requires a full 40-hex commit SHA; a branch/tag is allowed only with smoke_test=false (diagnostic, never published)"
+        required: true
       smoke_test:
         description: "Smoke-test gate. false = build-only DIAGNOSTIC run (never published)"
         required: false

@@ -43,8 +43,14 @@ signing keys. Every artifact records the exact source commits, lhpc recipe commi
 commit and container digest it was produced from.
 
 ## Updating a binary
-Actions → **build-binary** → Run workflow → pick the `stack` + `source_commit` → Run. That's it —
-no controller change, no manifest edit, no keys.
+Actions → **build-binary** → Run workflow → pick the `stack`, paste an **exact 40-hex
+loraham-pi-control commit SHA** as `lhpc_ref` (the immutable recipe a publishing build is built
+from), optionally set `source_commit`, and Run. That's it — no controller change, no manifest edit,
+no keys.
+
+`lhpc_ref` is **required** and, for a build that publishes, must be a full commit SHA — the recipe
+is pinned into the artifact's provenance. A branch/tag is accepted **only** with `smoke_test=false`,
+which is a build-only diagnostic run that never reaches the release.
 
 ## Scope
 `meshtastic` (meshtasticd, headless), `meshcom` (qemu-system-xtensa + firmware + bridge), `daemon`.
