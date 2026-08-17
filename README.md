@@ -55,3 +55,21 @@ which is a build-only diagnostic run that never reaches the release.
 ## Scope
 `meshtastic` (meshtasticd, headless), `meshcom` (qemu-system-xtensa + firmware + bridge), `daemon`.
 The trivial single-file and Python stacks stay source-built.
+
+## Licenses & attribution
+
+The build tooling in this repo is MIT ([LICENSE](LICENSE)). The **release assets are builds of
+other projects**, each under its own license; the exact source commit of every component is
+recorded per artifact in `index.json` (`components` map) and in the `.provenance.txt` beside it.
+
+- **`daemon`** — the [LoRaHAM daemon](https://github.com/makrohard/LoRaHAM_Daemon) · GPL-3.0 ·
+  original author **Alexander Walter** ([LoRaHAM project](https://github.com/LoRaHAM)); includes
+  [RadioLib](https://github.com/jgromes/RadioLib) (© Jan Gromeš, MIT) compiled in.
+- **`meshtastic`** — `meshtasticd` built from
+  [meshtastic/firmware](https://github.com/meshtastic/firmware) · © Meshtastic contributors ·
+  GPL-3.0.
+- **`meshcom`** — `qemu-system-xtensa` built from
+  [Espressif's QEMU fork](https://github.com/espressif/qemu)
+  (tag `esp-develop-9.0.0-20240606`) · GPL-2.0; the
+  [MeshCom firmware](https://github.com/icssw-org/MeshCom-Firmware) (© ICSSW, MIT); and the
+  [MeshCom bridge](https://github.com/makrohard/meshcom-loraham-bridge) (MIT).
