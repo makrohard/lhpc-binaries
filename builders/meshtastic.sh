@@ -47,12 +47,26 @@ echo "==> Pack (meshtasticd + web assets + build marker; runtime-root relative)"
 STAGE="$(mktemp -d)"
 mkdir -p "$STAGE/build/tools/meshtasticd"
 cp -a "$ROOT/build/tools/meshtasticd/." "$STAGE/build/tools/meshtasticd/"
-# The completion marker is what the controller reads to decide the stack counts as built, and it
-# now also carries the build inputs the controller compares against. An artifact shipped without
-# it leaves every box reading "not built" with no recovery but a republish — so its absence is a
-# build failure here, never a silent omission.
+# The completion marker is what the controller reads to decide the stack counts as built. An
+# artifact shipped without it leaves every box reading "not built" with no recovery but a
+# republish, so its absence is a build failure here, never a silent omission.
 MK="$ROOT/$M_PATH/.lhpc-build-complete"
 [ -f "$MK" ] || { echo "FAIL: build marker not at $MK — publishing without it would make every box read meshtastic as not built" >&2; exit 5; }
 install -D "$MK" "$STAGE/$M_PATH/.lhpc-build-complete"
+# Beside it, the recorded build inputs, when this controller records any. Written by the build
+# only where the manifest declares build_inputs, so its absence is normal on a controller that
+# predates them and fatal on one that does not — which is exactly the distinction the file
+# exists to carry. Copied by name rather than by glob: a glob would silently ship nothing.
+IN="$MK.inputs"
+RECORDS=$("$PY" -c "
+from lhpc.core.manifest import load_manifest
+print(any(c.build_inputs for st in load_manifest() if st.id == 'meshtastic'
+          for c in st.components))")
+if [ -f "$IN" ]; then
+  install -D "$IN" "$STAGE/$M_PATH/.lhpc-build-complete.inputs"
+elif [ "$RECORDS" = "True" ]; then
+  echo "FAIL: this controller records build inputs but the build wrote none at $IN" >&2
+  exit 5
+fi
 pack_and_fragment meshtastic "$STAGE" "$COMMIT" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
 write_provenance meshtastic
