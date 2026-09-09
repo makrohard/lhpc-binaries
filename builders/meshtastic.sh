@@ -47,7 +47,12 @@ echo "==> Pack (meshtasticd + web assets + build marker; runtime-root relative)"
 STAGE="$(mktemp -d)"
 mkdir -p "$STAGE/build/tools/meshtasticd"
 cp -a "$ROOT/build/tools/meshtasticd/." "$STAGE/build/tools/meshtasticd/"
+# The completion marker is what the controller reads to decide the stack counts as built, and it
+# now also carries the build inputs the controller compares against. An artifact shipped without
+# it leaves every box reading "not built" with no recovery but a republish — so its absence is a
+# build failure here, never a silent omission.
 MK="$ROOT/$M_PATH/.lhpc-build-complete"
-[ -f "$MK" ] && install -D "$MK" "$STAGE/$M_PATH/.lhpc-build-complete" || true
+[ -f "$MK" ] || { echo "FAIL: build marker not at $MK — publishing without it would make every box read meshtastic as not built" >&2; exit 5; }
+install -D "$MK" "$STAGE/$M_PATH/.lhpc-build-complete"
 pack_and_fragment meshtastic "$STAGE" "$COMMIT" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
 write_provenance meshtastic

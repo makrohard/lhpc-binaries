@@ -62,7 +62,13 @@ mkdir -p "$STAGE/$QREL"; cp -a "$QEMU_DIR/." "$STAGE/$QREL/"
 FLASH_DIR="$(dirname "$FLASH")"; FREL="${FLASH_DIR#"$ROOT"/}"
 mkdir -p "$STAGE/$FREL"
 cp -a "$FLASH_DIR"/*.bin "$STAGE/$FREL/"
-[ -f "$FLASH_DIR/.lhpc-build-complete" ] && cp "$FLASH_DIR/.lhpc-build-complete" "$STAGE/$FREL/" || true
+# The completion marker is what the controller reads to decide the stack counts as built, and it
+# now also carries the build inputs the controller compares against. An artifact shipped without
+# it leaves every box reading "not built" with no recovery but a republish — so its absence is a
+# build failure here, never a silent omission.
+MK="$FLASH_DIR/.lhpc-build-complete"
+[ -f "$MK" ] || { echo "FAIL: build marker not at $MK — publishing without it would make every box read meshcom as not built" >&2; exit 5; }
+cp "$MK" "$STAGE/$FREL/"
 # bridge binary
 install -D "$BRIDGE" "$STAGE/$B_PATH/build/meshcom-loraham-bridge"
 
