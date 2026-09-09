@@ -1,0 +1,28 @@
+# The builder's own tests: what may be published (`lib_index`) and what may be rolled back
+# (`rollback`). They are pure and offline — no network, no `gh`, no artifacts — so they run on
+# every push and pull request. A publish or a rollback is a write to a public release; its
+# refusal paths are the part that must be proven before it runs, not after.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97   # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: python3 -m pip install --quiet pytest
+      - run: python3 -m pytest tests/ -q
+      - name: Shell syntax of the builder scripts
+        run: bash -n builders/*.sh

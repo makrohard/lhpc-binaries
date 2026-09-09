@@ -26,9 +26,10 @@ Target: **aarch64 / Debian 13 (Trixie) / glibc 2.41** (Raspberry Pi OS on Pi Zer
 3. **publish** — the only job with `contents: write`, serialized across ALL stacks by a global
    concurrency group. It re-validates and RE-HASHES everything (never executing anything from
    the artifact), uploads the **content-addressed** asset `<stack>-<sha256>.tar.zst` (immutable,
-   old assets retained) plus a plain-text provenance file, and uploads `index.json` LAST as the
-   pointer switch. A transient index-read failure aborts the publish — it can never wipe the
-   other stacks' entries.
+   old assets retained) plus a plain-text provenance file, saves the index it is about to
+   replace as `index.prev.json`, and uploads `index.json` LAST as the pointer switch. A
+   transient index-read failure aborts the publish — it can never wipe the other stacks'
+   entries.
 
 ## index.json (schema 2)
 `{schema: 2, stacks: {<stack>: {filename, url, sha256, size, built_from,
@@ -51,6 +52,25 @@ no keys.
 `lhpc_ref` is **required** and, for a build that publishes, must be a full commit SHA — the recipe
 is pinned into the artifact's provenance. A branch/tag is accepted **only** with `smoke_test=false`,
 which is a build-only diagnostic run that never reaches the release.
+
+## Rolling back
+
+Every artifact ever published is still there (content-addressed, never clobbered) and the index
+each publish replaced is kept as `index.prev.json`. So pointing a stack back at an earlier
+build is a POINTER move, not a rebuild: Actions → **rollback-binary** → `stacks`
+(comma-separated), optionally `snapshot_json` (the index to restore from — blank means "undo
+the last publish") and `expect_json` (`{"<stack>": <the entry you published>}`).
+
+It runs in the publisher's own concurrency group and refuses rather than guesses:
+
+- the live entry must be the one the caller says it published — otherwise someone published in
+  between, and that is reported as a **conflict**, never overwritten;
+- the entry it restores must pass the same validator a publish passes, its artifact must still
+  exist, and its bytes must hash to the recorded sha256;
+- the index is read back after the switch and compared, so an upload that did not take effect
+  is never reported as a successful rollback.
+
+Nothing from an artifact is executed: names, bytes and hashes only.
 
 ## Scope
 `meshtastic` (meshtasticd, headless), `meshcom` (qemu-system-xtensa + firmware + bridge), `daemon`.

@@ -211,6 +211,10 @@ if "index.json" in names.stdout.split():
     idx, err = load_index(json.loads(raw.stdout))   # malformed JSON => hard fail (exception)
     if err:
         sys.exit("FAIL: " + err + " -- refusing to publish")
+    # Keep the index this publish is about to REPLACE, byte-for-byte, as its own asset. It is
+    # what `rollback.yml` restores from when a candidate turns out to be wrong, and the only
+    # copy of the previous pointer that survives the switch below.
+    open("dist-index-prev.json", "wb").write(raw.stdout)
 else:
     idx = {"schema": SCHEMA, "stacks": {}}
 
@@ -234,6 +238,12 @@ print(json.dumps(idx, indent=2))
 PY
 mv dist-index.json index.json
 mv dist-SHA256SUMS SHA256SUMS
+# The previous pointer goes up BEFORE the new one: after the switch below there is no other
+# copy of it, and a rollback that cannot read it has nothing to restore.
+if [ -f dist-index-prev.json ]; then
+  mv dist-index-prev.json index.prev.json
+  gh release upload "$REL" index.prev.json --clobber
+fi
 gh release upload "$REL" SHA256SUMS --clobber
 gh release upload "$REL" index.json --clobber      # the pointer switch — LAST
 echo "published ${FNAME} to release '$REL' (index switched)"

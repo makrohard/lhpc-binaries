@@ -1,0 +1,49 @@
+# Point a stack back at an artifact that was already built, smoke-tested and published — no
+# rebuild. It is the recovery path for an automated pin release whose proof failed AFTER its
+# candidate binaries went live: the index moves back, the artifacts stay where they are.
+#
+# It shares the publisher's GLOBAL `publish` concurrency group, so a rollback and a publish of
+# any stack can never interleave.
+name: rollback-binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      stacks:
+        description: "Comma-separated stack ids to restore (e.g. meshtastic,meshcom)"
+        required: true
+      snapshot_json:
+        description: "Index to restore FROM (JSON). Blank = the published index.prev.json, i.e. undo the LAST publish."
+        required: false
+        default: ""
+      expect_json:
+        description: '{"<stack>": <the entry you published>} — the rollback refuses when the live entry is not this one (someone else published in between). Blank = restore whatever is live.'
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: publish            # the SAME group the publisher serializes on
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the builder repo at the exact workflow SHA (credential-free)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Restore the index entries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STACKS: ${{ github.event.inputs.stacks }}
+          SNAPSHOT_JSON: ${{ github.event.inputs.snapshot_json }}
+          EXPECT_JSON: ${{ github.event.inputs.expect_json }}
+        run: python3 builders/rollback.py

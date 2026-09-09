@@ -15,6 +15,7 @@
 # All actions are pinned to full commit SHAs; the container is pinned by digest.
 
 name: build-binary
+run-name: "${{ inputs.stack }} @ ${{ inputs.lhpc_ref }}"
 
 on:
   workflow_dispatch:
@@ -50,6 +51,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
+    # Bounded on purpose: a caller waiting on this run needs a time after which the run is
+    # over rather than merely unresponsive. Untrusted upstream build systems run here.
+    timeout-minutes: 120
     permissions:
       contents: read
     steps:
@@ -92,6 +96,7 @@ jobs:
     needs: build
     if: github.event.inputs.stack != 'plumbing-check'
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -123,6 +128,7 @@ jobs:
     # additionally verifies the fragment's recorded smoke mode+result (defense in depth).
     if: github.event.inputs.stack != 'plumbing-check' && github.event.inputs.smoke_test != 'false'
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: write
     concurrency:
