@@ -26,3 +26,15 @@ jobs:
       - run: python3 -m pytest tests/ -q
       - name: Shell syntax of the builder scripts
         run: bash -n builders/*.sh
+
+      # The PRODUCER half of release attribution: an automated release freezes an upstream pin
+      # on the evidence `build_stack` writes, so which failures produce it — and which must not —
+      # is proven here against the real controller rule, not asserted in a comment.
+      - name: Checkout the controller (for the shared attribution rule)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          repository: makrohard/loraham-pi-control
+          path: .lhpc-src
+          persist-credentials: false
+      - name: Build-evidence contract
+        run: LHPC_SRC="$PWD/.lhpc-src" bash tests/test_build_stack_evidence.sh

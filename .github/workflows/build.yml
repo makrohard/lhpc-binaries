@@ -73,6 +73,8 @@ jobs:
             -e SMOKE_TEST="${{ github.event.inputs.smoke_test }}" \
             -e BUILDER_COMMIT="${{ github.sha }}" \
             -e CONTAINER_DIGEST="${CONTAINER_IMAGE}" \
+            -e GITHUB_RUN_ID="${{ github.run_id }}" \
+            -e GITHUB_RUN_ATTEMPT="${{ github.run_attempt }}" \
             -v "$PWD/builders:/builders:ro" \
             -v "$PWD/keyrings:/keyrings:ro" \
             -v "$RUNNER_TEMP/out:/out" \
@@ -83,13 +85,18 @@ jobs:
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out" 2>/dev/null || true
 
+      # `always()`: a FAILED build is exactly when this matters. The stack builder writes
+      # `<stack>.regression` when the failure was that stack's own, and an automated release
+      # freezes the pin on it — evidence that is only uploaded when the build SUCCEEDS is
+      # evidence that never exists. `if-no-files-found` drops to `warn` for the same reason: on
+      # the failure path there may be nothing but that one file, or nothing at all.
       - name: Hand off via artifact
-        if: github.event.inputs.stack != 'plumbing-check'
+        if: always() && github.event.inputs.stack != 'plumbing-check'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
         with:
           name: out-${{ github.event.inputs.stack }}-${{ github.run_id }}
           path: ${{ runner.temp }}/out
-          if-no-files-found: error
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
           retention-days: 3
 
   runtime-test:

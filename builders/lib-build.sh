@@ -115,3 +115,48 @@ run_smoke() {
   bash /builders/smoke.sh "$stack" "$ROOT"
   SMOKE_RESULT="passed"
 }
+
+# Run `lhpc build <stack>`, and on failure leave BOUNDED evidence for the release bot.
+#
+# An automated release freezes an upstream pin on this answer, so the question "was that failure
+# this stack's own?" is asked of the CONTROLLER at the exact commit we were told to build — the
+# same rule the release-verification lane applies to the same typed output. A second copy of it
+# in shell would drift, and the direction it drifts in is freezing a pin over a broken package
+# index. Everything unrecognised stays unclassified: no file is written, and the bot reports an
+# ordinary failure.
+#
+# The evidence BINDS itself to this execution. A marker alone says "some meshtastic build broke";
+# the bot must be able to tell that it was THIS dispatch, of THIS candidate.
+#
+# The filename is visible on purpose: `upload-artifact` drops dotfiles by default, so a
+# `.regression` member would have been written, uploaded into nothing, and silently never read.
+build_stack() {
+  # `$OUT_DIR` is the artifact hand-off directory; the container mounts it at /out. Named rather
+  # than hard-coded so this can be driven outside the container by its own test.
+  local stack="$1" cap rc out_dir="${OUT_DIR:-/out}"
+  cap="$(mktemp)"
+  set +e
+  "$LHPC" build "$stack" --yes 2>&1 | tee "$cap"
+  rc="${PIPESTATUS[0]}"
+  set -e
+  [ "$rc" = 0 ] && { rm -f "$cap"; return 0; }
+
+  echo "=== lhpc build log (tail) ==="
+  cat "$ROOT"/logs/build-"$stack"*.log 2>/dev/null | tail -100 || true
+
+  local marker
+  marker="$("$PY" "${LHPC_SRC_DIR:-/opt/lhpc-src}/tools/build_regression.py" "$stack" "$cap" || true)"
+  if [ -n "$marker" ]; then
+    {
+      printf '%s\n' "$marker"
+      printf 'builder-run: %s\n' "${GITHUB_RUN_ID:-unknown}"
+      printf 'builder-attempt: %s\n' "${GITHUB_RUN_ATTEMPT:-unknown}"
+      printf 'lhpc-commit: %s\n' "${LHPC_COMMIT:-unknown}"
+    } > "${out_dir}/${stack}.regression"
+    echo "==> wrote ${out_dir}/${stack}.regression — this stack's OWN build step failed"
+  else
+    echo "==> no regression evidence: nothing here says the recipe broke"
+  fi
+  rm -f "$cap"
+  return "$rc"
+}

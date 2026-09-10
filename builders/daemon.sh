@@ -29,7 +29,7 @@ HEAD="$(git -C "$ROOT/$D_PATH" rev-parse HEAD)"
 [ "$HEAD" = "$COMMIT" ] || { echo "HEAD $HEAD != requested $COMMIT" >&2; exit 4; }
 
 echo "==> lhpc build daemon (real recipe: RadioLib then daemon)"
-"$LHPC" build daemon --yes
+build_stack daemon || exit 5
 
 BIN="$ROOT/$D_PATH/loraham_daemon/loraham_daemon"
 [ -x "$BIN" ] || { echo "FAIL: daemon binary not at $BIN" >&2; exit 5; }

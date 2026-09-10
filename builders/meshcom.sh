@@ -28,11 +28,7 @@ HEAD="$(git -C "$ROOT/$Q_PATH" rev-parse HEAD)"
 [ "$HEAD" = "$COMMIT" ] || { echo "HEAD $HEAD != requested $COMMIT" >&2; exit 4; }
 
 echo "==> lhpc build meshcom (qemu-from-source + firmware + bridge — slowest)"
-if ! "$LHPC" build meshcom --yes; then
-  echo "=== lhpc build log (tail) ==="
-  cat "$ROOT"/logs/build-meshcom*.log 2>/dev/null | tail -120 || true
-  exit 5
-fi
+build_stack meshcom || exit 5
 
 QEMU_BIN="$(ls "$ROOT"/build/tool-cache/qemu-xtensa/*/qemu/bin/qemu-system-xtensa 2>/dev/null | head -1)"
 FLASH="$(ls "$ROOT/$Q_PATH"/.work/MeshCom-Firmware/.pio/build/*/flash.bin 2>/dev/null | head -1)"
