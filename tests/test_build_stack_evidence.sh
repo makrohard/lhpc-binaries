@@ -7,7 +7,17 @@
 set -euo pipefail
 BINARIES="$(cd "$(dirname "$0")/.." && pwd)"
 LHPC_SRC="${LHPC_SRC:-$HOME/claude/lhpc-auto-release-docs}"
-[ -f "$LHPC_SRC/tools/build_regression.py" ] || { echo "SKIP: no controller checkout at $LHPC_SRC"; exit 0; }
+if [ ! -f "$LHPC_SRC/tools/build_regression.py" ]; then
+  # A guard that exits 0 when its subject is missing is not a guard. In CI this is fatal: the
+  # checkout is part of the contract, and this test once "passed" in CI having run nothing,
+  # because the controller checkout predated the release that added the tool.
+  if [ -n "${CI:-}" ]; then
+    echo "FAIL: no controller tool at $LHPC_SRC/tools/build_regression.py — CI must check out a" >&2
+    echo "      controller that has it; this contract may not pass by skipping." >&2
+    exit 1
+  fi
+  echo "SKIP: no controller checkout at $LHPC_SRC (set LHPC_SRC)"; exit 0
+fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/out" "$TMP/root/logs" "$TMP/bin" "$TMP/opt/lhpc-src"
