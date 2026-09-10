@@ -36,5 +36,10 @@ jobs:
           repository: makrohard/loraham-pi-control
           path: .lhpc-src
           persist-credentials: false
+      # The contract asks the CONTROLLER which failures attribute, and answering that loads its
+      # manifest — which pulls in the web/PKI modules and therefore its dependencies. The builder
+      # container installs lhpc properly, so this does the same rather than guessing at a subset.
+      - name: Install the controller (as the builder container does)
+        run: python3 -m pip install --quiet ./.lhpc-src
       - name: Build-evidence contract
         run: LHPC_SRC="$PWD/.lhpc-src" bash tests/test_build_stack_evidence.sh
