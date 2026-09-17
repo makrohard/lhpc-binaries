@@ -57,8 +57,8 @@ install -D "$MK" "$STAGE/$M_PATH/.lhpc-build-complete"
 # of that directory — nothing to copy here. Verified rather than assumed:
 RECORDS=$("$PY" -c "
 from lhpc.core.manifest import load_manifest
-print(any(c.build_inputs for st in load_manifest() if st.id == 'meshtastic'
-          for c in st.components))")
+print(any(c.build_inputs or getattr(c, 'asset_inputs', ()) for st in load_manifest()
+          if st.id == 'meshtastic' for c in st.components))")
 if [ "$RECORDS" = "True" ] && [ ! -f "$STAGE/build/tools/meshtasticd/.lhpc-build-inputs" ]; then
   echo "FAIL: this controller records build inputs but none reached the artifact" >&2
   exit 5

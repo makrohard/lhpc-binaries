@@ -65,6 +65,20 @@ cp -a "$FLASH_DIR"/*.bin "$STAGE/$FREL/"
 MK="$FLASH_DIR/.lhpc-build-complete"
 [ -f "$MK" ] || { echo "FAIL: build marker not at $MK — publishing without it would make every box read meshcom as not built" >&2; exit 5; }
 cp "$MK" "$STAGE/$FREL/"
+# The build-input SIDECAR lives beside the artifact (same directory as flash.bin): since lhpc 0.7.0
+# it records the packaged assets the build consumed, and `is_built` compares it byte for byte. Ask
+# the CONTROLLER whether it records anything for this stack; if it does and no sidecar reached the
+# stage, that is a build failure — an artifact without it reads NOT built on every 0.7.0 box with
+# no recovery but a republish (exactly what the cfec05e proof build did).
+SIDE="$FLASH_DIR/.lhpc-build-inputs"
+RECORDS="$("$PY" -c "
+from lhpc.core.manifest import load_manifest
+print(any(c.build_inputs or getattr(c, 'asset_inputs', ()) for st in load_manifest()
+          if st.id == 'meshcom' for c in st.components))")"
+if [ "$RECORDS" = "True" ]; then
+  [ -f "$SIDE" ] || { echo "FAIL: this controller records build inputs for meshcom but $SIDE is missing" >&2; exit 5; }
+  cp "$SIDE" "$STAGE/$FREL/"
+fi
 # bridge binary
 install -D "$BRIDGE" "$STAGE/$B_PATH/build/meshcom-loraham-bridge"
 
