@@ -30,6 +30,20 @@ HEAD="$(git -C "$ROOT/$Q_PATH" rev-parse HEAD)"
 echo "==> lhpc build meshcom (qemu-from-source + firmware + bridge — slowest)"
 build_stack meshcom || exit 5
 
+# The artifact is LABELLED with the manifest's meshcom-firmware pin (lib_provenance derives the
+# components map from the manifest). Until lhpc 0.9.2 the QEMU build fetched a hardcoded commit,
+# so the label and the bytes disagreed for every artifact since 0.2.10 (finding R8). Refuse to
+# pack anything whose firmware checkout is not the pin: the label must be the truth, not a copy
+# of the manifest.
+read -r _FW_REMOTE FW_PIN _FW_PATH <<<"$(read_src meshcom-firmware)"
+FW_WORK="$ROOT/$Q_PATH/.work/MeshCom-Firmware"
+FW_HEAD="$(git -C "$FW_WORK" rev-parse HEAD 2>/dev/null || echo missing)"
+if [ "$FW_HEAD" != "$FW_PIN" ]; then
+  echo "FAIL: firmware checkout in $FW_WORK is $FW_HEAD but the manifest pins meshcom-firmware at $FW_PIN — the artifact would be labelled with a commit it does not contain" >&2
+  exit 5
+fi
+echo "==> firmware checkout $FW_HEAD == manifest pin (label is the truth)"
+
 QEMU_BIN="$(ls "$ROOT"/build/tool-cache/qemu-xtensa/*/qemu/bin/qemu-system-xtensa 2>/dev/null | head -1)"
 FLASH="$(ls "$ROOT/$Q_PATH"/.work/MeshCom-Firmware/.pio/build/*/flash.bin 2>/dev/null | head -1)"
 BRIDGE="$ROOT/$B_PATH/build/meshcom-loraham-bridge"
