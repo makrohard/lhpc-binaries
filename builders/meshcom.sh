@@ -72,6 +72,12 @@ for f in COPYING SOURCE; do
 done
 QREL="${QEMU_DIR#"$ROOT"/}"
 mkdir -p "$STAGE/$QREL"; cp -a "$QEMU_DIR/." "$STAGE/$QREL/"
+# GPLv2 §3: the complete corresponding QEMU source goes beside the artifact as its own content-
+# addressed asset, and the artifact's SOURCE note names it (publish.sh checks both).
+QSRC="$(PY="$PY" LHPC_COMMIT="${LHPC_COMMIT:-}" CONTAINER_DIGEST="${CONTAINER_DIGEST:-}" bash /builders/qemu-source.sh "$ROOT/$Q_PATH" "$QEMU_BIN" "$DIST")"
+printf 'Complete corresponding source: %s, published beside this artifact in the same release.\n' "$QSRC" \
+  >> "$STAGE/$QREL/share/doc/qemu/SOURCE"
+echo "==> QEMU source companion: $QSRC ($(stat -c %s "$DIST/$QSRC") bytes)"
 # firmware flash images + the build marker (co-located with flash.bin); NOT the object tree
 FLASH_DIR="$(dirname "$FLASH")"; FREL="${FLASH_DIR#"$ROOT"/}"
 mkdir -p "$STAGE/$FREL"

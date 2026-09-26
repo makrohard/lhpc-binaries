@@ -160,6 +160,26 @@ gh release view "$REL" >/dev/null 2>&1 || \
     --notes "Per-stack aarch64/Trixie binaries. Consumed via index.json (schema 2, sha256-verified, content-addressed assets)." \
     --latest=false
 
+if [ "$STACK" = meshcom ]; then
+  # GPLv2 §3: the artifact ships QEMU, so its complete corresponding source must be published with it.
+  # It goes up FIRST, so no index ever points at an artifact whose source is not already there.
+  echo "==> QEMU source companion: exactly one, content-addressed, named by the artifact"
+  srcs=("$OUT"/meshcom-qemu-source-*.tar.zst)
+  [ ${#srcs[@]} -eq 1 ] && [ -f "${srcs[0]}" ] || { echo "FAIL: expected exactly one meshcom-qemu-source-*.tar.zst" >&2; exit 4; }
+  QSRC="$(basename "${srcs[0]}")"; QSHA="$(sha256sum "${srcs[0]}" | cut -d' ' -f1)"
+  [ "$QSRC" = "meshcom-qemu-source-$QSHA.tar.zst" ] || { echo "FAIL: $QSRC is not named by its sha256" >&2; exit 4; }
+  tar --zstd -xOf "$OUT/$FNAME" --wildcards './build/tool-cache/qemu-xtensa/*/qemu/share/doc/qemu/SOURCE' \
+    | grep -qF "$QSRC" || { echo "FAIL: the artifact's QEMU SOURCE note does not name $QSRC" >&2; exit 4; }
+  if gh release view "$REL" --json assets --jq '.assets[].name' | grep -qx "$QSRC"; then
+    echo "source $QSRC already published"
+  else
+    gh release upload "$REL" "${srcs[0]}"
+  fi
+  QV="$(mktemp -d)"; gh release download "$REL" --pattern "$QSRC" --dir "$QV"
+  echo "$QSHA  $QV/$QSRC" | sha256sum -c - >/dev/null || { echo "FAIL: uploaded source digest mismatch" >&2; exit 4; }
+  echo "source companion verified"
+fi
+
 echo "==> Upload the immutable asset (skip when the identical digest already exists)"
 if gh release view "$REL" --json assets --jq '.assets[].name' | grep -qx "$FNAME"; then
   echo "asset $FNAME already published (content-addressed — identical by name)"

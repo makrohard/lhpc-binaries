@@ -129,8 +129,41 @@ jobs:
             -v "$PWD/out:/out:ro" \
             "${CONTAINER_IMAGE}" bash /builders/runtime-test.sh
 
+  source-check:
+    # GPLv2 §3: the meshcom artifact ships QEMU, so its source companion must be complete. Rebuild it
+    # OFFLINE in the build image and boot the artifact's firmware on the result. Other stacks: no-op.
+    needs: build
+    if: github.event.inputs.stack != 'plumbing-check'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout builder repo (credential-free)
+        if: github.event.inputs.stack == 'meshcom'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          persist-credentials: false
+      - name: Fetch build artifact
+        if: github.event.inputs.stack == 'meshcom'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: out-${{ github.event.inputs.stack }}-${{ github.run_id }}
+          path: out
+      - name: Offline rebuild from the source companion
+        if: github.event.inputs.stack == 'meshcom'
+        run: |
+          set -euo pipefail
+          docker run --name srcdeps "${CONTAINER_IMAGE}" bash -c "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            gcc g++ python3 python3-venv ninja-build meson pkg-config binutils flex bison zstd curl ca-certificates \
+            libglib2.0-dev libpixman-1-dev libslirp-dev zlib1g-dev libgcrypt20-dev >/dev/null"
+          docker commit srcdeps srcimg >/dev/null
+          docker run --rm --network none \
+            -v "$PWD/builders:/builders:ro" -v "$PWD/out:/out:ro" \
+            srcimg bash /builders/source-check.sh
+
   publish:
-    needs: [build, runtime-test]
+    needs: [build, runtime-test, source-check]
     # smoke_test=false is a DIAGNOSTIC build: it must never reach the release. publish.sh
     # additionally verifies the fragment's recorded smoke mode+result (defense in depth).
     if: github.event.inputs.stack != 'plumbing-check' && github.event.inputs.smoke_test != 'false'
