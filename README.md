@@ -90,6 +90,9 @@ recorded per artifact in `index.json` (`components` map) and in the `.provenance
   GPL-3.0.
 - **`meshcom`** — `qemu-system-xtensa` built from
   [Espressif's QEMU fork](https://github.com/espressif/qemu)
-  (tag `esp-develop-9.0.0-20240606`) · GPL-2.0; the
+  (tag `esp-develop-9.2.2-20260417`) plus a temporary patch whose source is
+  [meshcom-qemu-raspi `patches/qemu/`](https://github.com/makrohard/meshcom-qemu-raspi/tree/main/patches/qemu)
+  (submitted upstream as [espressif/qemu#183](https://github.com/espressif/qemu/pull/183)) · GPL-2.0,
+  with QEMU's licence texts and a `SOURCE` note shipped in `qemu/share/doc/qemu/` of the artifact; the
   [MeshCom firmware](https://github.com/icssw-org/MeshCom-Firmware) (© ICSSW, MIT); and the
   [MeshCom bridge](https://github.com/makrohard/meshcom-loraham-bridge) (MIT).

@@ -66,6 +66,10 @@ echo "==> Pack (qemu install dir + firmware *.bin + marker + bridge; runtime-roo
 STAGE="$(mktemp -d)"
 # qemu install prefix (bin + share/pc-bios)
 QEMU_DIR="$(dirname "$(dirname "$QEMU_BIN")")"          # .../qemu
+# QEMU is GPL-2.0: the artifact must carry its licence and source note (installed by build-qemu.sh)
+for f in COPYING SOURCE; do
+  [ -f "$QEMU_DIR/share/doc/qemu/$f" ] || { echo "FAIL: $QEMU_DIR/share/doc/qemu/$f missing — the artifact would ship QEMU without its GPL text/source note" >&2; exit 5; }
+done
 QREL="${QEMU_DIR#"$ROOT"/}"
 mkdir -p "$STAGE/$QREL"; cp -a "$QEMU_DIR/." "$STAGE/$QREL/"
 # firmware flash images + the build marker (co-located with flash.bin); NOT the object tree
