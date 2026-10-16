@@ -26,6 +26,14 @@ echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive.asc] http://archive
   > /etc/apt/sources.list.d/raspi.list
 apt-get update -qq
 
+if [ "$STACK" = "meshtastic-web" ]; then
+  # A browser client, no ELF: its gate is the lab smoke against the meshtasticd it pairs with.
+  if [ "${SMOKE_TEST:-true}" = "false" ]; then
+    echo "RUNTIME-TEST: smoke skipped (diagnostic build)"; exit 0
+  fi
+  exec bash /builders/web-smoke.sh
+fi
+
 read_frag() { python3 -c "import json,sys; d=json.load(open('$FRAG')); print(d$1)"; }
 FNAME="$(read_frag "['filename']")"
 SHA="$(read_frag "['sha256']")"

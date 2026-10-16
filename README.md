@@ -58,6 +58,24 @@ history is never cut by a count, and assets are never deleted, so a controller t
 releases behind still finds its own build. One entry is about 1.6 KB; the controller reads at most
 1 MiB, and a publish that would grow the file past that is refused. `rollback-binary` covers `index.json` only.
 
+## meshtastic-web (index-v3.json only)
+The Meshtastic browser client as its own artifact, for the controller's `stable` and `dev` web selectors (its
+`binary` selector uses the manifest's own pinned release and never reads this). Run **build-binary** with
+`stack = meshtastic-web`, the `channel`, and an `lhpc_ref`; there is no ref for the client itself:
+- `dev`: upstream `main` HEAD at run time (`git ls-remote`), built with upstream's recipe (`pnpm install
+  --frozen-lockfile`, `pnpm run build`, `pnpm run package`) under a sha256-pinned Node 24; `web_version` is
+  upstream's nightly label `nightly-<newest release tag>-<12 hex>`;
+- `stable`: the newest upstream release's `build.tar`, republished as it is; `web_version` is its tag.
+The artifact holds only `build/tools/meshtastic-web/web/`, the client as meshtasticd serves it (gunzipped). Its entry
+carries `channel`, `web_version` and `components = {meshtastic-web: <client commit>, meshtastic: <meshtasticd
+commit>}`: the client was smoke-tested against that meshtasticd, the `lhpc_ref` manifest's pin, taken from its own
+index-v3 meshtastic entry (publish that first). The smoke (runtime-test job, a clean Trixie container) runs that
+meshtasticd on SimRadio with `RootPath` = the client; headless Chromium connects through the client's own HTTP dialog
+and must show the node's long name (read from the daemon's log) as connected within 120 s; the same client with its
+main bundle truncated must FAIL that check. The publisher checks the client commit against upstream (a stable tag must
+name it; a dev commit must be fetchable) and files the entry under the dispatched channel; a stable and a dev entry of
+one commit are two compositions.
+
 ## Trust
 Binaries are served from this **public** repo over HTTPS and verified by **sha256 + size**
 (recorded in `index.json`) on the Pi — the same trust anchor lhpc already uses for source. No

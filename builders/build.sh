@@ -96,6 +96,11 @@ case "${STACK}" in
   plumbing-check)
     echo "PLUMBING OK — arm64 + Trixie + lhpc installed. No stack built."
     ;;
+  meshtastic-web)
+    # The client is fetched or built with upstream's own Node recipe; lhpc declares no apt
+    # dependencies for it. lhpc_ref only names the meshtasticd it is paired with.
+    exec bash /builders/meshtastic-web.sh
+    ;;
   daemon|meshtastic|meshcom)
     install_declared_deps "${STACK}"
     if [ -f "/builders/${STACK}.sh" ]; then

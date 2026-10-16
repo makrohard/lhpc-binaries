@@ -25,7 +25,7 @@ on:
         required: true
         default: plumbing-check
         type: choice
-        options: [plumbing-check, daemon, meshtastic, meshcom]
+        options: [plumbing-check, daemon, meshtastic, meshcom, meshtastic-web]
       source_commit:
         description: "Source commit override (blank = the lhpc manifest pin)"
         required: false
@@ -38,6 +38,12 @@ on:
         required: false
         default: true
         type: boolean
+      channel:
+        description: "meshtastic-web only: dev = upstream main HEAD, built here; stable = the newest upstream release (no ref is taken)"
+        required: false
+        default: dev
+        type: choice
+        options: [dev, stable]
 
 permissions: {}
 
@@ -71,6 +77,7 @@ jobs:
             -e SOURCE_COMMIT="${{ github.event.inputs.source_commit }}" \
             -e LHPC_REF="${{ github.event.inputs.lhpc_ref }}" \
             -e SMOKE_TEST="${{ github.event.inputs.smoke_test }}" \
+            -e WEB_CHANNEL="${{ github.event.inputs.channel }}" \
             -e BUILDER_COMMIT="${{ github.sha }}" \
             -e CONTAINER_DIGEST="${CONTAINER_IMAGE}" \
             -e GITHUB_RUN_ID="${{ github.run_id }}" \
@@ -124,6 +131,7 @@ jobs:
           docker run --rm \
             -e STACK="${{ github.event.inputs.stack }}" \
             -e SMOKE_TEST="${{ github.event.inputs.smoke_test }}" \
+            -e INDEX_V3_URL="https://github.com/${{ github.repository }}/releases/download/binaries/index-v3.json" \
             -v "$PWD/builders:/builders:ro" \
             -v "$PWD/keyrings:/keyrings:ro" \
             -v "$PWD/out:/out:ro" \
@@ -196,4 +204,5 @@ jobs:
           EXPECTED_LHPC_COMMIT: ${{ github.event.inputs.lhpc_ref }}
           EXPECTED_CONTAINER_DIGEST: ${{ env.CONTAINER_IMAGE }}
           SOURCE_COMMIT: ${{ github.event.inputs.source_commit }}
+          EXPECTED_CHANNEL: ${{ github.event.inputs.channel }}
         run: bash builders/publish.sh out

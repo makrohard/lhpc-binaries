@@ -18,6 +18,12 @@ SIDECAR = ".lhpc-build-inputs"
 # past it would fail on every box at once, so the publish refuses it instead (it is never cut).
 INDEX_V3_MAX_BYTES = 1 << 20
 _V3_FIELDS = {"inputs": dict, "published_at": str}
+# The Meshtastic web client (B2): a schema-3-only stack whose entries also say which channel they
+# serve and which client version they are, and pair the client with the meshtasticd it was
+# smoke-tested against.
+WEB_STACK = "meshtastic-web"
+_WEB_FIELDS = {"channel": str, "web_version": str}
+WEB_CHANNELS = ("stable", "dev")
 # Fields every index entry carries. The value is the type the field must have.
 _FIELDS = {
     "filename": str, "url": str, "sha256": str, "size": int, "built_from": str,
@@ -36,6 +42,8 @@ STACK_PATHS = {
     "meshtastic": ("build/tools/meshtasticd/", "src/meshtastic-firmware/"),
     "meshcom": ("build/tool-cache/qemu-xtensa/", "src/meshcom-qemu-raspi/",
                 "src/meshcom-loraham-bridge/"),
+    # Only the SERVED tree: the controller writes its marker and provenance beside it.
+    "meshtastic-web": ("build/tools/meshtastic-web/web/",),
 }
 
 
@@ -141,21 +149,42 @@ def inputs_map(recording, sidecar_digests):
 
 
 def validate_entry_v3(sid, e):
-    """A schema-3 entry: a valid schema-2 entry plus `inputs` and `published_at`."""
+    """A schema-3 entry: a valid schema-2 entry plus `inputs` and `published_at` (and, for the web
+    client, `channel` and `web_version`)."""
     if not isinstance(e, dict):
         return f"entry {sid!r} is not an object"
-    err = validate_entry(sid, {k: v for k, v in e.items() if k not in _V3_FIELDS})
+    extra = _WEB_FIELDS if sid == WEB_STACK else {}
+    err = validate_entry(sid, {k: v for k, v in e.items() if k not in _V3_FIELDS and k not in extra})
     if err:
         return err
     for k, t in _V3_FIELDS.items():
         if not isinstance(e.get(k), t):
             return f"entry {sid!r}: field {k!r} missing or not {t.__name__}"
+    if sid == WEB_STACK:
+        err = _web_error(sid, e)
+        if err:
+            return err
     for cid, digest in e["inputs"].items():
         if cid not in e["components"] or not isinstance(digest, str) \
                 or not re.fullmatch(r"[0-9a-f]{64}", digest):
             return f"entry {sid!r}: bad inputs entry {cid!r}"
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", e["published_at"]):
         return f"entry {sid!r}: published_at is not UTC YYYY-MM-DDTHH:MM:SSZ"
+    return ""
+
+
+def _web_error(sid, e):
+    for k, t in _WEB_FIELDS.items():
+        if not isinstance(e.get(k), t) or not e[k]:
+            return f"entry {sid!r}: field {k!r} missing or empty"
+    if e["channel"] not in WEB_CHANNELS:
+        return f"entry {sid!r}: channel {e['channel']!r} is not one of {WEB_CHANNELS}"
+    if not re.fullmatch(r"[A-Za-z0-9.@+_-]{1,64}", e["web_version"]):
+        return f"entry {sid!r}: web_version {e['web_version']!r} is not a version label"
+    if set(e["components"]) != {WEB_STACK, "meshtastic"}:
+        return f"entry {sid!r}: components must be exactly {WEB_STACK} and meshtastic"
+    if e["inputs"] or e["runtime_deps"]:
+        return f"entry {sid!r}: a web client has no build inputs and no runtime_deps"
     return ""
 
 
@@ -180,7 +209,8 @@ def load_index_v3(raw_obj):
 
 def composition(e):
     """An entry's composition key: what a box compares before it downloads."""
-    return (e["target"], sorted(e["components"].items()), sorted(e["inputs"].items()))
+    return (e["target"], e.get("channel"), sorted(e["components"].items()),
+            sorted(e["inputs"].items()))
 
 
 def v3_size_error(text):

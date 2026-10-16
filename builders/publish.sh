@@ -39,12 +39,45 @@ read -r EXPECTED_BUILT_FROM EXPECTED_COMPONENTS INDEX_URL RECORDING < <(
 import json, os, sys
 sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
 from lib_provenance import derive, index_target
-bf, comps = derive(sys.argv[1], sys.argv[2])
-url, rec = index_target(sys.argv[1])
+if sys.argv[1] == "meshtastic-web":
+    # The client's own commit is upstream's (checked below); the trusted part here is the
+    # meshtasticd it is paired with: the lhpc_ref manifest's meshtastic pin.
+    bf, comps = "-", {"meshtastic": derive("meshtastic")[1]["meshtastic"]}
+    url, rec = "index-v3", []
+else:
+    bf, comps = derive(sys.argv[1], sys.argv[2])
+    url, rec = index_target(sys.argv[1])
 print(bf, json.dumps(comps, sort_keys=True, separators=(",", ":")), url,
       json.dumps(rec, separators=(",", ":")))
 PY
 )
+if [ "$EXPECTED_STACK" = meshtastic-web ]; then
+  # No ref goes in, so the web commit comes from the build; it must be upstream's own, as the
+  # channel says: stable = the commit the release tag `web_version` names, dev = a commit
+  # upstream serves. The entry goes into index-v3.json only, under the dispatched channel.
+  [ -z "$SOURCE_COMMIT" ] || { echo "FAIL: meshtastic-web takes no source_commit" >&2; exit 4; }
+  read -r WEB_COMMIT WEB_CHANNEL_F WEB_VERSION < <(python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
+print(d["components"]["meshtastic-web"], d["channel"], d["web_version"])' "$FRAG")
+  [[ "$WEB_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: web commit is not a full sha" >&2; exit 4; }
+  [ "$WEB_CHANNEL_F" = "${EXPECTED_CHANNEL:?}" ] || { echo "FAIL: fragment channel $WEB_CHANNEL_F != dispatched $EXPECTED_CHANNEL" >&2; exit 4; }
+  WEB_UP=https://github.com/meshtastic/web
+  if [ "$WEB_CHANNEL_F" = stable ]; then
+    TAGGED="$(git ls-remote "$WEB_UP" "refs/tags/$WEB_VERSION*" | BUILDERS_DIR="${BUILDERS_DIR:-builders}" python3 -c '
+import os, sys
+sys.path.insert(0, os.environ["BUILDERS_DIR"])
+from lib_web import peeled_commit
+print(peeled_commit(sys.stdin.read(), sys.argv[1]) or "")' "$WEB_VERSION")"
+    [ "$TAGGED" = "$WEB_COMMIT" ] || { echo "FAIL: upstream tag $WEB_VERSION is ${TAGGED:-absent}, not $WEB_COMMIT" >&2; exit 4; }
+  else
+    git init -q "$LHPC_SRC/webcheck"
+    git -C "$LHPC_SRC/webcheck" fetch -q --depth 1 "$WEB_UP" "$WEB_COMMIT" \
+      || { echo "FAIL: upstream serves no commit $WEB_COMMIT" >&2; exit 4; }
+  fi
+  EXPECTED_BUILT_FROM="$WEB_COMMIT"
+  EXPECTED_COMPONENTS="$(python3 -c 'import json,sys; c=json.loads(sys.argv[1]); c["meshtastic-web"]=sys.argv[2]
+print(json.dumps(c, sort_keys=True, separators=(",", ":")))' "$EXPECTED_COMPONENTS" "$WEB_COMMIT")"
+  INDEX_URL="https://github.com/$REPO/releases/download/$REL/index-v3.json"
+fi
 [ -n "$EXPECTED_BUILT_FROM" ] && [ -n "$EXPECTED_COMPONENTS" ] && [ -n "$RECORDING" ] || { echo "FAIL: provenance re-derivation failed" >&2; exit 4; }
 # The index this publish writes is the one the recipe's manifest names: index.json (schema 2) or
 # index-v3.json (schema 3, a history). Anything else is refused before anything is uploaded.
@@ -86,7 +119,7 @@ if d.get("components") != json.loads(os.environ["EXPECTED_COMPONENTS"]):
 # A fragment IS an index entry plus its stack id and minus the url (added at merge time):
 # validate it with EXACTLY the rules every preserved entry must satisfy — one rule set, one
 # implementation (two similar validators drift, and the weaker one decides; audit finding).
-probe = {k: v for k, v in d.items() if k != "stack"}
+probe = {k: v for k, v in d.items() if k not in ("stack", "channel", "web_version")}
 probe["url"] = "https://example.invalid/" + str(d.get("filename", ""))
 err = validate_entry(d["stack"], probe)
 if err:
