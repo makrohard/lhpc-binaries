@@ -35,3 +35,21 @@ def derive(stack, source_commit=""):
     if source_commit:
         comps[principal] = source_commit
     return built_from, comps
+
+
+def index_target(stack):
+    """Return (index_url, recording) for `stack` from the CURRENT lhpc manifest: the index its
+    `[stack.binary]` names, and `recording_components` (the keys of a schema-3 entry's `inputs`)."""
+    from lhpc.core.manifest import load_manifest
+    for st in load_manifest():
+        if st.id == stack and st.binary is not None:
+            return st.binary.index_url, recording_components(st)
+    raise SystemExit(f"lib_provenance: stack {stack!r} has no [binary] index_url")
+
+
+def recording_components(st):
+    """The component ids the artifact COVERS that record build inputs. A component of the stack
+    outside `[stack.binary] covers` (the web client) is not in the artifact, so its inputs are not
+    the entry's; the controller compares exactly this set (covers that record inputs)."""
+    return sorted(c.id for c in st.components if c.id in st.binary.covers
+                  and (getattr(c, "build_inputs", ()) or getattr(c, "asset_inputs", ())))

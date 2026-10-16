@@ -34,25 +34,35 @@ git -C "$LHPC_SRC/lhpc" -c advice.detachedHead=false checkout --quiet "$EXPECTED
 python3 -m venv "$LHPC_SRC/venv"
 "$LHPC_SRC/venv/bin/pip" install --quiet --upgrade pip >/dev/null
 "$LHPC_SRC/venv/bin/pip" install --quiet "$LHPC_SRC/lhpc" >/dev/null
-read -r EXPECTED_BUILT_FROM EXPECTED_COMPONENTS < <(
+read -r EXPECTED_BUILT_FROM EXPECTED_COMPONENTS INDEX_URL RECORDING < <(
   BUILDERS_DIR="${BUILDERS_DIR:-builders}" "$LHPC_SRC/venv/bin/python" - "$EXPECTED_STACK" "$SOURCE_COMMIT" <<'PY'
 import json, os, sys
 sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
-from lib_provenance import derive
+from lib_provenance import derive, index_target
 bf, comps = derive(sys.argv[1], sys.argv[2])
-print(bf, json.dumps(comps, sort_keys=True, separators=(",", ":")))
+url, rec = index_target(sys.argv[1])
+print(bf, json.dumps(comps, sort_keys=True, separators=(",", ":")), url,
+      json.dumps(rec, separators=(",", ":")))
 PY
 )
-[ -n "$EXPECTED_BUILT_FROM" ] && [ -n "$EXPECTED_COMPONENTS" ] || { echo "FAIL: provenance re-derivation failed" >&2; exit 4; }
+[ -n "$EXPECTED_BUILT_FROM" ] && [ -n "$EXPECTED_COMPONENTS" ] && [ -n "$RECORDING" ] || { echo "FAIL: provenance re-derivation failed" >&2; exit 4; }
+# The index this publish writes is the one the recipe's manifest names: index.json (schema 2) or
+# index-v3.json (schema 3, a history). Anything else is refused before anything is uploaded.
+INDEX_NAME="$(BUILDERS_DIR="${BUILDERS_DIR:-builders}" python3 -c '
+import os, sys
+sys.path.insert(0, os.environ["BUILDERS_DIR"])
+from lib_index import index_name
+print(index_name(*sys.argv[1:]) or "")' "$INDEX_URL" "$REPO" "$REL")"
+[ -n "$INDEX_NAME" ] || { echo "FAIL: the manifest's index_url $INDEX_URL is not an index of release $REL" >&2; exit 4; }
 export EXPECTED_STACK EXPECTED_BUILDER_COMMIT EXPECTED_LHPC_COMMIT EXPECTED_CONTAINER_DIGEST \
-       EXPECTED_BUILT_FROM EXPECTED_COMPONENTS
-echo "expected: stack=${EXPECTED_STACK} built_from=${EXPECTED_BUILT_FROM} components=${EXPECTED_COMPONENTS}"
+       EXPECTED_BUILT_FROM EXPECTED_COMPONENTS INDEX_NAME RECORDING
+echo "expected: stack=${EXPECTED_STACK} built_from=${EXPECTED_BUILT_FROM} components=${EXPECTED_COMPONENTS} index=${INDEX_NAME}"
 
 echo "==> Validate the fragment + artifact (nothing from the build job is trusted)"
 python3 - "$FRAG" "$OUT" <<'PY'
 import hashlib, json, os, subprocess, sys, tarfile
 sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
-from lib_index import validate_entry, path_allowed   # THE one entry validator + extraction scope
+from lib_index import SIDECAR, inputs_map, path_allowed, validate_entry   # THE one validator
 
 frag_path, out = sys.argv[1], sys.argv[2]
 d = json.load(open(frag_path))
@@ -100,7 +110,7 @@ MAX_MEMBERS = 20000
 MAX_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 zstd = subprocess.Popen(["zstd", "-dc", tar_path], stdout=subprocess.PIPE)
-seen_names, members, total = set(), 0, 0
+seen_names, members, total, sidecars = set(), 0, 0, []
 try:
     with tarfile.open(fileobj=zstd.stdout, mode="r|") as tf:
         for m in tf:
@@ -130,6 +140,12 @@ try:
                 total += m.size
                 if total > MAX_TOTAL_BYTES:
                     sys.exit(f"FAIL: archive expands beyond {MAX_TOTAL_BYTES} bytes")
+                # The build-input sidecar's bytes are what a box's `is_built` compares; their
+                # digest becomes the schema-3 entry's `inputs`, read here, never from the fragment.
+                if name.split("/")[-1] == SIDECAR:
+                    if m.size > 65536:
+                        sys.exit(f"FAIL: {raw!r} is larger than a build-input record")
+                    sidecars.append(hashlib.sha256(tf.extractfile(m).read()).hexdigest())
 finally:
     if zstd.stdout:
         zstd.stdout.close()
@@ -139,6 +155,11 @@ if zstd.returncode != 0:
 prov = os.path.join(out, f"{d['stack']}.provenance.txt")
 if not os.path.isfile(prov):
     sys.exit("FAIL: provenance file missing")
+if os.environ["INDEX_NAME"] == "index-v3.json":
+    inputs, err = inputs_map(json.loads(os.environ["RECORDING"]), sidecars)
+    if err:
+        sys.exit("FAIL: " + err)
+    json.dump(inputs, open("dist-inputs.json", "w"))
 print(f"VALIDATED {d['filename']} ({d['size']} bytes) smoke={d['smoke']}")
 PY
 
@@ -194,11 +215,12 @@ gh release download "$REL" --pattern "$FNAME" --dir "$VDIR"
 echo "$SHA  $VDIR/$FNAME" | sha256sum -c - >/dev/null || { echo "FAIL: uploaded asset digest mismatch" >&2; exit 4; }
 echo "uploaded asset verified"
 
-echo "==> Merge into index.json (authenticated read, fail-hard) + SHA256SUMS; index uploaded LAST"
+echo "==> Merge into ${INDEX_NAME} (authenticated read, fail-hard); index uploaded LAST"
 python3 - "$REPO" "$REL" "$FRAG" <<'PY'
-import json, os, subprocess, sys
+import json, os, subprocess, sys, time
 sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
-from lib_index import SCHEMA, load_index, validate_entry
+from lib_index import (SCHEMA, SCHEMA_V3, load_index, load_index_v3, merge_v3, v3_size_error,
+                       validate_entry, validate_entry_v3)
 
 repo, rel, frag_path = sys.argv[1], sys.argv[2], sys.argv[3]
 frag = json.load(open(frag_path))
@@ -215,28 +237,45 @@ names = subprocess.run(
     capture_output=True, text=True)
 if names.returncode != 0:
     sys.exit("FAIL: cannot list release assets: " + names.stderr.strip())
-if "index.json" in names.stdout.split():
+name = os.environ["INDEX_NAME"]
+v3 = name == "index-v3.json"
+idx = {"schema": SCHEMA_V3 if v3 else SCHEMA, "stacks": {}}
+if name in names.stdout.split():
     got = subprocess.run(
         ["gh", "api", "repos/%s/releases/tags/%s" % (repo, rel)],
         capture_output=True, text=True)
     if got.returncode != 0:
         sys.exit("FAIL: cannot read release via API")
     asset_id = next(a["id"] for a in json.loads(got.stdout)["assets"]
-                    if a["name"] == "index.json")
+                    if a["name"] == name)
     raw = subprocess.run(
         ["gh", "api", "-H", "Accept: application/octet-stream",
          "repos/%s/releases/assets/%s" % (repo, asset_id)], capture_output=True)
     if raw.returncode != 0:
-        sys.exit("FAIL: cannot download current index.json")
-    idx, err = load_index(json.loads(raw.stdout))   # malformed JSON => hard fail (exception)
+        sys.exit("FAIL: cannot download current " + name)
+    # malformed JSON => hard fail (exception); load_index_v3 also revalidates every entry
+    idx, err = (load_index_v3 if v3 else load_index)(json.loads(raw.stdout))
     if err:
         sys.exit("FAIL: " + err + " -- refusing to publish")
     # Keep the index this publish is about to REPLACE, byte-for-byte, as its own asset. It is
     # what `rollback.yml` restores from when a candidate turns out to be wrong, and the only
     # copy of the previous pointer that survives the switch below.
-    open("dist-index-prev.json", "wb").write(raw.stdout)
-else:
-    idx = {"schema": SCHEMA, "stacks": {}}
+    if not v3:
+        open("dist-index-prev.json", "wb").write(raw.stdout)
+if v3:
+    # The HISTORY: this entry first, an older build of the same composition replaced, every
+    # other composition kept. index.json, SHA256SUMS and index.prev.json are not touched.
+    frag["inputs"] = json.load(open("dist-inputs.json"))
+    frag["published_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    err = validate_entry_v3(stack, frag)
+    if err:
+        sys.exit("FAIL: " + err)
+    text = json.dumps(merge_v3(idx, stack, frag), indent=2, sort_keys=True)
+    err = v3_size_error(text)
+    if err:
+        sys.exit("FAIL: " + err + " -- refusing to publish")
+    open("dist-index.json", "w").write(text)
+    sys.exit(0)
 
 # Revalidate every PRESERVED entry with the SAME rules the new one passes: a corrupted
 # neighbour must not ride along into the new index.
@@ -256,6 +295,12 @@ with open("dist-SHA256SUMS", "w") as fh:
         fh.write(e["sha256"] + "  " + e["filename"] + "\n")
 print(json.dumps(idx, indent=2))
 PY
+if [ "$INDEX_NAME" = index-v3.json ]; then
+  mv dist-index.json index-v3.json
+  gh release upload "$REL" index-v3.json --clobber   # the pointer switch — LAST
+  echo "published ${FNAME} to release '$REL' (index-v3 switched)"
+  exit 0
+fi
 mv dist-index.json index.json
 mv dist-SHA256SUMS SHA256SUMS
 # The previous pointer goes up BEFORE the new one: after the switch below there is no other

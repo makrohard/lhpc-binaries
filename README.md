@@ -26,8 +26,9 @@ Target: **aarch64 / Debian 13 (Trixie) / glibc 2.41** (Raspberry Pi OS on Pi Zer
 3. **publish** — the only job with `contents: write`, serialized across ALL stacks by a global
    concurrency group. It re-validates and RE-HASHES everything (never executing anything from
    the artifact), uploads the **content-addressed** asset `<stack>-<sha256>.tar.zst` (immutable,
-   old assets retained) plus a plain-text provenance file, saves the index it is about to
-   replace as `index.prev.json`, and uploads `index.json` LAST as the pointer switch. A
+   old assets retained) plus a plain-text provenance file, and uploads the index LAST as the
+   pointer switch: the one the `lhpc_ref` manifest's `[stack.binary] index_url` names,
+   `index.json` (saving the one it replaces as `index.prev.json`) or `index-v3.json`. A
    transient index-read failure aborts the publish — it can never wipe the other stacks'
    entries.
 
@@ -36,6 +37,26 @@ Target: **aarch64 / Debian 13 (Trixie) / glibc 2.41** (Raspberry Pi OS on Pi Zer
 components: {<lhpc component id>: <commit>}, lhpc_commit, builder_commit, target, os,
 container_digest, runtime_deps, smoke: {mode, result}, extract_to}}}` — the `components` map is
 the authoritative pin comparison for lhpc's binary channel; `built_from` is display-only.
+
+## index-v3.json (schema 3)
+The index for controllers that pick the newest build compatible with them, beside `index.json`
+(which stays as it is for the controllers that read it; a v3 publish does not touch it,
+`SHA256SUMS` or `index.prev.json`). `{schema: 3, stacks: {<stack>: [<entry>, …]}}`, each list
+newest first. An entry is a schema-2 entry plus:
+- `inputs`: `{<component id>: <sha256>}`, the digest of the `.lhpc-build-inputs` file inside the
+  artifact (what the controller's `is_built` compares), computed by the publisher from the
+  artifact, never taken from the build job. Keys: the components the artifact covers
+  (`[stack.binary] covers`) that record `build_inputs` or `asset_inputs` (meshtastic: `meshtastic`;
+  meshcom: `meshcom-qemu`; daemon: none, `{}`); a component outside `covers`, such as the web
+  client, is not in the artifact and is not a key. More than one such component, or another
+  number of sidecars in the artifact, refuses the publish.
+- `published_at`: UTC `YYYY-MM-DDTHH:MM:SSZ`.
+
+A **composition** is (`target`, `components`, `inputs`). A publish puts its entry first; an older
+entry of the same composition (a rebuild) is replaced, every other composition is kept. The
+history is never cut by a count, and assets are never deleted, so a controller that is several
+releases behind still finds its own build. One entry is about 1.6 KB; the controller reads at most
+1 MiB, and a publish that would grow the file past that is refused. `rollback-binary` covers `index.json` only.
 
 ## Trust
 Binaries are served from this **public** repo over HTTPS and verified by **sha256 + size**

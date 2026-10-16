@@ -9,6 +9,15 @@ finding). Everything an index entry must satisfy lives here.
 import re
 
 SCHEMA = 2
+# The second index (schema 3, `index-v3.json`): per stack a HISTORY, newest first, one entry per
+# distinct composition. Which file a publish writes is named by the lhpc_ref manifest.
+SCHEMA_V3 = 3
+INDEX_NAMES = {"index.json": SCHEMA, "index-v3.json": SCHEMA_V3}
+SIDECAR = ".lhpc-build-inputs"
+# The controller reads at most this much of an index (binary_install._INDEX_MAX_BYTES): a history
+# past it would fail on every box at once, so the publish refuses it instead (it is never cut).
+INDEX_V3_MAX_BYTES = 1 << 20
+_V3_FIELDS = {"inputs": dict, "published_at": str}
 # Fields every index entry carries. The value is the type the field must have.
 _FIELDS = {
     "filename": str, "url": str, "sha256": str, "size": int, "built_from": str,
@@ -76,8 +85,8 @@ def validate_entry(sid, e):
     if not e["components"]:
         return f"entry {sid!r}: empty components map"
     for cid, commit in e["components"].items():
-        if not re.fullmatch(r"[a-z0-9-]+", str(cid)) or not re.fullmatch(r"[0-9a-f]{40}",
-                                                                        str(commit)):
+        if not re.fullmatch(r"[a-z0-9-]+", str(cid)) or not isinstance(commit, str) \
+                or not re.fullmatch(r"[0-9a-f]{40}", commit):
             return f"entry {sid!r}: bad components entry {cid!r}"
     for k in ("lhpc_commit", "builder_commit"):
         if not re.fullmatch(r"[0-9a-f]{40}", e[k]):
@@ -108,3 +117,82 @@ def load_index(raw_obj):
     if not isinstance(raw_obj.get("stacks"), dict):
         return None, "index has no stacks table"
     return raw_obj, ""
+
+
+def index_name(index_url, repo, rel):
+    """The asset name `index_url` points at in this repo's release `rel`, or None when it names
+    anything but one of INDEX_NAMES there (a publish never writes a file it cannot identify)."""
+    base = f"https://github.com/{repo}/releases/download/{rel}/"
+    name = index_url[len(base):] if str(index_url).startswith(base) else ""
+    return name if name in INDEX_NAMES else None
+
+
+def inputs_map(recording, sidecar_digests):
+    """Return ({component id: sidecar sha256}, error). `recording` = the stack's components whose
+    manifest entry records build inputs (trusted); `sidecar_digests` = the sha256 of every
+    `.lhpc-build-inputs` member inside the artifact. One sidecar per stack is all a builder packs
+    today, so more than one recording component is refused rather than guessed at."""
+    if len(recording) > 1:
+        return None, f"more than one component records build inputs {sorted(recording)}"
+    if len(sidecar_digests) != len(recording):
+        return None, (f"{len(sidecar_digests)} {SIDECAR} member(s) in the artifact, "
+                      f"{len(recording)} component(s) record build inputs")
+    return dict(zip(recording, sidecar_digests)), ""
+
+
+def validate_entry_v3(sid, e):
+    """A schema-3 entry: a valid schema-2 entry plus `inputs` and `published_at`."""
+    if not isinstance(e, dict):
+        return f"entry {sid!r} is not an object"
+    err = validate_entry(sid, {k: v for k, v in e.items() if k not in _V3_FIELDS})
+    if err:
+        return err
+    for k, t in _V3_FIELDS.items():
+        if not isinstance(e.get(k), t):
+            return f"entry {sid!r}: field {k!r} missing or not {t.__name__}"
+    for cid, digest in e["inputs"].items():
+        if cid not in e["components"] or not isinstance(digest, str) \
+                or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return f"entry {sid!r}: bad inputs entry {cid!r}"
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", e["published_at"]):
+        return f"entry {sid!r}: published_at is not UTC YYYY-MM-DDTHH:MM:SSZ"
+    return ""
+
+
+def load_index_v3(raw_obj):
+    """Validate a decoded index-v3.json and return (index, error): schema 3, a stacks table of
+    lists, every entry valid. Anything else is a hard failure, as for schema 2."""
+    if not isinstance(raw_obj, dict) or set(raw_obj) != {"schema", "stacks"}:
+        return None, "index-v3 is not an object of exactly schema + stacks"
+    if raw_obj["schema"] != SCHEMA_V3:
+        return None, f"unknown index schema {raw_obj['schema']!r}"
+    if not isinstance(raw_obj["stacks"], dict):
+        return None, "index has no stacks table"
+    for sid, entries in sorted(raw_obj["stacks"].items()):
+        if not isinstance(entries, list):
+            return None, f"stack {sid!r} is not a list"
+        for e in entries:
+            err = validate_entry_v3(sid, e)
+            if err:
+                return None, err
+    return raw_obj, ""
+
+
+def composition(e):
+    """An entry's composition key: what a box compares before it downloads."""
+    return (e["target"], sorted(e["components"].items()), sorted(e["inputs"].items()))
+
+
+def v3_size_error(text):
+    """"" when the serialized index-v3 fits what a controller reads, else the refusal."""
+    n = len(text.encode())
+    return "" if n <= INDEX_V3_MAX_BYTES else (
+        f"index-v3.json would be {n} bytes, past the {INDEX_V3_MAX_BYTES} a controller reads")
+
+
+def merge_v3(idx, sid, entry):
+    """Put `entry` first in its stack's history. An older entry of the SAME composition (a rebuild)
+    is replaced; every other composition is kept, however many publications follow it."""
+    key = composition(entry)
+    idx["stacks"][sid] = [entry] + [e for e in idx["stacks"].get(sid, []) if composition(e) != key]
+    return idx
