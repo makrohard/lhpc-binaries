@@ -5,7 +5,7 @@
 #
 #   smoke.sh <stack> <runtime-root>
 #
-# Exit codes: 7 = boot/exec failure, 8 = web GUI unreachable. Prints "SMOKE: PASS ..." on success.
+# Exit codes: 7 = boot/exec failure, 8 = web server or GUI unreachable. Prints "SMOKE: PASS ..." on success.
 set -euo pipefail
 
 STACK="${1:?stack}"
@@ -29,20 +29,22 @@ smoke_daemon() {
 
 smoke_meshtastic() {
   local mtd="$ROOT/build/tools/meshtasticd/meshtasticd"
-  local webroot="$ROOT/build/tools/meshtasticd/web"
   [ -x "$mtd" ] || { echo "FAIL: meshtasticd not at $mtd" >&2; exit 7; }
   "$mtd" --version 2>&1 | sed -n '1p' || true
-  echo "web root: $webroot"; ls "$webroot" 2>/dev/null | head -5 || echo "(web root missing!)"
   local sm; sm="$(mktemp -d)"
+  # Only what meshtasticd itself owns: it boots, its web server answers, its API port accepts.
+  # The web client is its own artifact (meshtastic-web) with its own smoke, so the root here is
+  # an empty directory and any HTTP status (an empty root gives 404) proves the server runs.
   # `Lora: Module: sim` = SimRadio (no SPI/GPIO); explicit MAC because the container has no
   # usable interface (else exit 8 "Please set a MAC Address"). Self-generated SSL cert.
+  mkdir -p "$sm/web"
   cat > "$sm/config.yaml" <<YAML
 ---
 Lora:
   Module: sim
 Webserver:
   Port: 9443
-  RootPath: $webroot
+  RootPath: $sm/web
   SSLKey: $sm/key.pem
   SSLCert: $sm/cert.pem
 Logging:
@@ -51,22 +53,29 @@ General:
   MACAddress: "02:00:00:00:00:01"
 YAML
   HOME="$sm" "$mtd" -c "$sm/config.yaml" >"$sm/meshtasticd.log" 2>&1 &
-  local mpid=$! web=0 code
-  echo "meshtasticd pid $mpid — polling https://127.0.0.1:9443/"
+  local mpid=$! web=0 api=0 code
+  echo "meshtasticd pid $mpid — polling https://127.0.0.1:9443/ and TCP 4403"
   for _ in $(seq 1 40); do
     if ! kill -0 "$mpid" 2>/dev/null; then echo "meshtasticd exited early"; break; fi
-    code="$(curl -k -s -o "$sm/body.html" -w '%{http_code}' --max-time 3 https://127.0.0.1:9443/ 2>/dev/null || true)"
-    if [ "$code" = "200" ] && grep -qiE 'meshtastic|<!doctype html|<html' "$sm/body.html"; then
-      web=1; echo "web GUI 200 ($(wc -c <"$sm/body.html") bytes)"; break
-    fi
+    code="$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 3 https://127.0.0.1:9443/ 2>/dev/null || true)"
+    if [ -n "$code" ] && [ "$code" != "000" ]; then web=1; echo "web server HTTP $code"; break; fi
     sleep 2
   done
-  kill -TERM "$mpid" 2>/dev/null || true; sleep 1; kill -KILL "$mpid" 2>/dev/null || true
-  if [ "$web" != "1" ]; then
-    echo "=== meshtasticd log (tail) ==="; tail -50 "$sm/meshtasticd.log" 2>/dev/null || true
-    echo "FAIL: meshtastic web GUI not reachable on :9443" >&2; exit 8
+  if [ "$web" = "1" ]; then
+    for _ in 1 2 3 4 5; do
+      if (exec 3<>/dev/tcp/127.0.0.1/4403) 2>/dev/null; then api=1; echo "API port 4403 accepts"; break; fi
+      sleep 1
+    done
   fi
-  echo "SMOKE: PASS (meshtasticd boots as sim node; web GUI reachable on :9443)"
+  local alive=0; kill -0 "$mpid" 2>/dev/null && alive=1
+  kill -TERM "$mpid" 2>/dev/null || true; sleep 1; kill -KILL "$mpid" 2>/dev/null || true
+  if [ "$web" != "1" ] || [ "$api" != "1" ] || [ "$alive" != "1" ]; then
+    echo "=== meshtasticd log (tail) ==="; tail -50 "$sm/meshtasticd.log" 2>/dev/null || true
+    [ "$alive" = "1" ] || { echo "FAIL: meshtasticd exited (boot failure)" >&2; exit 7; }
+    [ "$web" = "1" ] || { echo "FAIL: meshtasticd web server not answering on :9443" >&2; exit 8; }
+    echo "FAIL: meshtasticd API port 4403 not accepting" >&2; exit 7
+  fi
+  echo "SMOKE: PASS (meshtasticd boots as sim node; web server answers on :9443; API on 4403)"
 }
 
 smoke_meshcom() {
