@@ -3,17 +3,48 @@
 # Requires: $PY, $LHPC, $LHPC_COMMIT, $BUILDER_COMMIT, $CONTAINER_DIGEST, $ROOT, $DIST.
 
 # Read a component's (remote, pin_commit, path) straight from lhpc's manifest loader.
-read_src() { "$PY" - "$1" <<'PY'
+# `read_src --optional <id>` prints nothing for a component this lhpc does not declare; the
+# manifest itself must still load.
+read_src() {
+  local optional=""
+  [ "$1" != "--optional" ] || { optional=1; shift; }
+  "$PY" - "$1" "$optional" <<'PY'
 import sys
 from lhpc.core.manifest import load_manifest
-cid = sys.argv[1]
+cid, optional = sys.argv[1], sys.argv[2]
 for st in load_manifest():
     for c in st.components:
         if c.id == cid and getattr(c, "source", None):
             print(c.source.remote, c.source.pin_commit, c.source.path)
             raise SystemExit(0)
-sys.exit("component/source not found: " + cid)
+if not optional:
+    sys.exit("component/source not found: " + cid)
 PY
+}
+
+# The daemon's Meshstick library: its build.sh writes lib/libloraham-ch341.so beside the binary,
+# with the pine64 commit it was built from embedded. Prints the library's path; fails unless the
+# file is there and embeds exactly `pin`.
+daemon_lib() {  # daemon_lib <daemon binary> <pine64 pin>
+  local lib
+  [[ "$2" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: pine64 pin is not a full commit id: '$2'" >&2; exit 5; }
+  lib="$(dirname "$1")/lib/libloraham-ch341.so"
+  [ -f "$lib" ] || { echo "FAIL: Meshstick library not built: $lib" >&2; exit 5; }
+  grep -aqF "$2" "$lib" || { echo "FAIL: $lib does not embed pine64 $2" >&2; exit 5; }
+  printf '%s\n' "$lib"
+}
+
+# Clone `remote` and check out exactly `pin`; fails unless the checkout's HEAD is the pin.
+clone_pin() {  # clone_pin <remote> <pin> <dest>
+  git clone --quiet "$1" "$3"
+  git -C "$3" -c advice.detachedHead=false checkout --quiet "$2"
+  [ "$(git -C "$3" rev-parse HEAD)" = "$2" ] || { echo "FAIL: $3 is not at $2" >&2; exit 4; }
+}
+
+# Stage the daemon artifact: the binary, and the Meshstick library beside it when one is given.
+daemon_stage() {  # daemon_stage <stage dir> <daemon source path> <binary> [library]
+  install -D "$3" "$1/$2/loraham_daemon/loraham_daemon"
+  [ -z "${4:-}" ] || install -D -m 0644 "$4" "$1/$2/loraham_daemon/lib/libloraham-ch341.so"
 }
 
 # Derive runtime packages for one ELF: ldd -> dpkg -S. A library that cannot be mapped to a
@@ -30,6 +61,12 @@ deps_of() {
         echo "$pkg"
       fi
     done | sort -u
+}
+
+# The runtime packages of several ELFs, each once (for one ELF: exactly `deps_of`).
+deps_of_all() {
+  local elf
+  for elf in "$@"; do deps_of "$elf"; done | sort -u
 }
 
 # Fail if any dependency line is an UNOWNED marker.

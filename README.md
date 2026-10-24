@@ -125,7 +125,11 @@ recorded per artifact in `index.json` (`components` map) and in the `.provenance
 
 - **`daemon`** — the [LoRaHAM daemon](https://github.com/makrohard/LoRaHAM_Daemon) · GPL-3.0 ·
   original author **Alexander Walter** ([LoRaHAM project](https://github.com/LoRaHAM)); includes
-  [RadioLib](https://github.com/jgromes/RadioLib) (© Jan Gromeš, MIT) compiled in.
+  [RadioLib](https://github.com/jgromes/RadioLib) (© Jan Gromeš, MIT) compiled in. Where lhpc's
+  manifest declares the `libch341` source, the artifact also carries the Meshstick library
+  `loraham_daemon/lib/libloraham-ch341.so`: pine64's
+  [libch341-spi-userspace](https://github.com/pine64/libch341-spi-userspace) (GPL-2.0-or-later, at the
+  commit in `components`) with the daemon's adapter; it needs `libusb-1.0-0` at run time.
 - **`meshtastic`** — `meshtasticd` built from
   [meshtastic/firmware](https://github.com/meshtastic/firmware) · © Meshtastic contributors ·
   GPL-3.0.

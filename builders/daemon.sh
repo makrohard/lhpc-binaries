@@ -13,13 +13,23 @@ source /builders/headless-policy.sh
 
 read -r D_REMOTE D_PIN D_PATH  <<<"$(read_src loraham-daemon)"
 read -r R_REMOTE R_PIN R_PATH  <<<"$(read_src radiolib)"
+# The Meshstick library's pine64 source, where this lhpc declares it: the daemon's build.sh then
+# builds lib/libloraham-ch341.so, and the artifact carries it beside the binary.
+P_SRC="$(read_src --optional libch341)"
 COMMIT="${SOURCE_COMMIT:-$D_PIN}"
 echo "daemon   : $D_REMOTE @ $COMMIT -> $D_PATH"
 echo "radiolib : $R_REMOTE @ $R_PIN -> $R_PATH"
+if [ -n "$P_SRC" ]; then
+  read -r P_REMOTE P_PIN P_PATH <<<"$P_SRC"
+  echo "libch341 : $P_REMOTE @ $P_PIN -> $P_PATH"
+else
+  echo "libch341 : not declared by this lhpc (no Meshstick library)"
+fi
 
 echo "==> Clone sources"
 git clone --quiet "$R_REMOTE" "$ROOT/$R_PATH"
 git -C "$ROOT/$R_PATH" -c advice.detachedHead=false checkout --quiet "$R_PIN"
+[ -z "$P_SRC" ] || clone_pin "$P_REMOTE" "$P_PIN" "$ROOT/$P_PATH"
 git clone --quiet "$D_REMOTE" "$ROOT/$D_PATH"
 git -C "$ROOT/$D_PATH" fetch --quiet origin "$COMMIT" 2>/dev/null || true
 git -C "$ROOT/$D_PATH" -c advice.detachedHead=false checkout --quiet "$COMMIT"
@@ -34,19 +44,26 @@ build_stack daemon || exit 5
 BIN="$ROOT/$D_PATH/loraham_daemon/loraham_daemon"
 [ -x "$BIN" ] || { echo "FAIL: daemon binary not at $BIN" >&2; exit 5; }
 file "$BIN"
+ELFS=("$BIN")
+if [ -n "$P_SRC" ]; then
+  LIB="$(daemon_lib "$BIN" "$P_PIN")"
+  file "$LIB"
+  ELFS+=("$LIB")
+fi
 
 run_smoke daemon
 
 echo "==> Runtime deps (ldd -> dpkg -S; unowned libraries are a hard failure)"
-echo "--- raw ldd ---"; ldd "$BIN" 2>&1 | sed -n '1,25p' || true
-mapfile -t DEPS < <(deps_of "$BIN")
+# The binary dlopen()s the library, so ldd of the binary cannot see the library's own deps.
+echo "--- raw ldd ---"; for elf in "${ELFS[@]}"; do ldd "$elf" 2>&1 | sed -n '1,25p' || true; done
+mapfile -t DEPS < <(deps_of_all "${ELFS[@]}")
 require_owned_deps daemon "${DEPS[@]:-}"
 printf 'runtime_deps: %s\n' "${DEPS[*]:-<none>}"
 headless_deps_check daemon "${DEPS[@]:-}"
-ldd_closure_check daemon "$BIN"
+ldd_closure_check daemon "${ELFS[@]}"
 
 echo "==> Pack (tar.zst; extracts relative to the runtime root)"
 STAGE="$(mktemp -d)"
-install -D "$BIN" "$STAGE/$D_PATH/loraham_daemon/loraham_daemon"
+daemon_stage "$STAGE" "$D_PATH" "$BIN" "${LIB:-}"
 pack_and_fragment daemon "$STAGE" "$COMMIT" "$SMOKE_MODE" "$SMOKE_RESULT" "${DEPS[@]:-}"
 write_provenance daemon

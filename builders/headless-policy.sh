@@ -36,3 +36,14 @@ ldd_closure_check() {
   done
   return $bad
 }
+
+# The daemon's Meshstick library is dlopen()ed at run time, not linked, so ldd of the binary never
+# loads it: load each one under `root` the way the daemon does (RTLD_NOW, every symbol bound).
+dlopen_check() {  # dlopen_check <root>
+  local so
+  while IFS= read -r so; do
+    python3 -c 'import ctypes, os, sys; ctypes.CDLL(sys.argv[1], mode=os.RTLD_NOW)' "$so" \
+      || { echo "FAIL: $so does not load" >&2; exit 9; }
+    echo "dlopen: ${so#"$1"/} loads"
+  done < <(find "$1" -type f -path '*/loraham_daemon/lib/libloraham-ch341.so')
+}

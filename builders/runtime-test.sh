@@ -104,6 +104,9 @@ done
 [ "$bad" -eq 0 ] || exit 9
 echo "runtime_deps closure: complete"
 
+# A dlopen()ed library (the daemon's Meshstick lib/) must load with only runtime_deps installed.
+dlopen_check "$ROOT"
+
 if [ "${SMOKE_TEST:-true}" = "false" ]; then
   echo "RUNTIME-TEST: extraction + ELF closure OK; smoke skipped (diagnostic build)"
   exit 0
