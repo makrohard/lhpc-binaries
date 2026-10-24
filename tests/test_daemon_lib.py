@@ -220,6 +220,19 @@ def test_for_the_binary_alone_the_deps_are_exactly_deps_of(tmp_path):
     assert _run(f'deps_of_all "{binary}"', env).stdout == _run(f'deps_of "{binary}"', env).stdout
 
 
+def test_an_unowned_library_dependency_stays_visible(tmp_path):
+    # Every builder runs under `set -euo pipefail`; `dpkg -S` exits 1 for a library no package
+    # owns. That must still print UNOWNED, so require_owned_deps fails the build.
+    (usb,) = _libs(tmp_path, "libusb-1.0.so.0")
+    lib = tmp_path / "libloraham-ch341.so"
+    env = _stub_deps(tmp_path, {lib: [usb]}, {})
+    out = _run(f'mapfile -t D < <(deps_of "{lib}"); printf "%s\\n" "${{D[@]:-}}"; '
+               f'require_owned_deps daemon "${{D[@]:-}}"', env)
+    assert f"UNOWNED:{usb}" in out.stdout
+    assert out.returncode == 6
+    assert "not owned by any package" in out.stderr
+
+
 def _listing(stage: Path):
     return sorted((str(p.relative_to(stage)), oct(p.stat().st_mode & 0o777))
                   for p in stage.rglob("*") if p.is_file())

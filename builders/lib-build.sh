@@ -54,7 +54,9 @@ deps_of() {
   local elf="$1" so pkg
   ldd "$elf" 2>/dev/null | grep -oE '/[^ ]+\.so[.0-9]*' | sort -u \
   | while read -r so; do
-      pkg="$(dpkg -S "$(readlink -f "$so" 2>/dev/null || echo "$so")" 2>/dev/null | cut -d: -f1)"
+      # `|| true`: dpkg -S exits 1 for an unowned library, and under pipefail that failed
+      # assignment would end the loop (errexit) before the UNOWNED line below is printed.
+      pkg="$(dpkg -S "$(readlink -f "$so" 2>/dev/null || echo "$so")" 2>/dev/null | cut -d: -f1 || true)"
       if [ -z "$pkg" ]; then
         echo "UNOWNED:$so"
       else
