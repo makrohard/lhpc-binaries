@@ -24,6 +24,13 @@ EXPECTED_BUILDER_COMMIT="${EXPECTED_BUILDER_COMMIT:?}"
 EXPECTED_LHPC_COMMIT="${EXPECTED_LHPC_COMMIT:?}"
 EXPECTED_CONTAINER_DIGEST="${EXPECTED_CONTAINER_DIGEST:?}"
 SOURCE_COMMIT="${SOURCE_COMMIT:-}"
+# A meshtastic-web build of a pinned upstream commit is a diagnostic: never published (refused before
+# anything is fetched; the workflow does not even run this job for it). Either sign refuses it: the
+# dispatched source_commit, or the fragment's own "diagnostic" marker (whatever the env carries).
+[ "$EXPECTED_STACK" != meshtastic-web ] || [ -z "$SOURCE_COMMIT" ] \
+  || { echo "FAIL: meshtastic-web takes no source_commit (a pinned build is a diagnostic)" >&2; exit 4; }
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(4 if not isinstance(d, dict) or "diagnostic" in d else 0)' "$FRAG" \
+  || { echo "FAIL: the fragment is a diagnostic build (or unreadable): never published" >&2; exit 4; }
 [[ "$EXPECTED_LHPC_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: EXPECTED_LHPC_COMMIT is not a 40-hex sha" >&2; exit 4; }
 
 echo "==> Independently re-derive built_from + components from lhpc@${EXPECTED_LHPC_COMMIT} (trusted)"
@@ -55,7 +62,6 @@ if [ "$EXPECTED_STACK" = meshtastic-web ]; then
   # No ref goes in, so the web commit comes from the build; it must be upstream's own, as the
   # channel says: stable = the commit the release tag `web_version` names, dev = a commit
   # upstream serves. The entry goes into index-v3.json only, under the dispatched channel.
-  [ -z "$SOURCE_COMMIT" ] || { echo "FAIL: meshtastic-web takes no source_commit" >&2; exit 4; }
   read -r WEB_COMMIT WEB_CHANNEL_F WEB_VERSION < <(python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
 print(d["components"]["meshtastic-web"], d["channel"], d["web_version"])' "$FRAG")
   [[ "$WEB_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: web commit is not a full sha" >&2; exit 4; }

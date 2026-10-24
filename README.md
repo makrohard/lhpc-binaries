@@ -66,6 +66,8 @@ The Meshtastic browser client as its own artifact, for the controller's `stable`
   --frozen-lockfile`, `pnpm run build`, `pnpm run package`) under a sha256-pinned Node 24; `web_version` is
   upstream's nightly label `nightly-<newest release tag>-<12 hex>`;
 - `stable`: the newest upstream release's `build.tar`, republished as it is; `web_version` is its tag.
+- a `dev` run with `source_commit` (40 hex, an upstream commit) builds and smoke-tests that commit instead of
+  `main` HEAD: a diagnostic (to bisect a red dev smoke) that is never published.
 The artifact holds only `build/tools/meshtastic-web/web/`, the client as meshtasticd serves it (gunzipped). Its entry
 carries `channel`, `web_version` and `components = {meshtastic-web: <client commit>, meshtastic: <meshtasticd
 commit>}`: the client was smoke-tested against that meshtasticd, the `lhpc_ref` manifest's pin, taken from its own

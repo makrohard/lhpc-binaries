@@ -3,6 +3,8 @@
 #   dev    = upstream `main` HEAD at run time (`git ls-remote`), built with upstream's own recipe
 #            (pnpm install --frozen-lockfile; apps/web: pnpm run build, pnpm run package);
 #   stable = upstream's newest release, its `build.tar` asset republished as it is.
+# A dev SOURCE_COMMIT (40 hex) builds that upstream commit instead of main HEAD: a DIAGNOSTIC run
+# (smoke included) that the workflow never publishes and publish.sh refuses.
 # Either way the artifact holds the client as meshtasticd serves it (gunzipped, as LHPC's
 # meshtastic-web-assets.sh leaves it) under build/tools/meshtastic-web/web/, nothing else. The lab
 # smoke (a browser against meshtasticd) runs in the runtime-test job; it is what admits the entry.
@@ -12,7 +14,10 @@ DIST=/out
 UPSTREAM=https://github.com/meshtastic/web
 CHANNEL="${WEB_CHANNEL:-}"
 [ "$CHANNEL" = dev ] || [ "$CHANNEL" = stable ] || { echo "FAIL: channel must be dev or stable (got '$CHANNEL')" >&2; exit 2; }
-[ -z "${SOURCE_COMMIT:-}" ] || { echo "FAIL: meshtastic-web takes no source_commit (dev = main HEAD, stable = the newest release)" >&2; exit 2; }
+if [ -n "${SOURCE_COMMIT:-}" ]; then
+  [ "$CHANNEL" = dev ] || { echo "FAIL: meshtastic-web takes a source_commit only on channel dev (stable = the newest release)" >&2; exit 2; }
+  [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: source_commit must be a full 40-hex upstream commit (got '$SOURCE_COMMIT')" >&2; exit 2; }
+fi
 
 # Node for the dev build: the official linux-arm64 tarball, pinned by version and sha256 (upstream
 # builds with Node 24; the Pi never runs it).
@@ -22,9 +27,14 @@ NODE_SHA256=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
 WORK="$(mktemp -d)"
 TAR="$WORK/build.tar"
 if [ "$CHANNEL" = dev ]; then
-  WEB_COMMIT="$(git ls-remote "$UPSTREAM" refs/heads/main | cut -f1)"
-  [[ "$WEB_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: could not resolve $UPSTREAM main" >&2; exit 4; }
-  echo "==> dev: $UPSTREAM main = $WEB_COMMIT"
+  if [ -n "${SOURCE_COMMIT:-}" ]; then
+    WEB_COMMIT="$SOURCE_COMMIT"
+    echo "==> dev: $UPSTREAM commit $WEB_COMMIT (source_commit: DIAGNOSTIC, never published)"
+  else
+    WEB_COMMIT="$(git ls-remote "$UPSTREAM" refs/heads/main | cut -f1)"
+    [[ "$WEB_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: could not resolve $UPSTREAM main" >&2; exit 4; }
+    echo "==> dev: $UPSTREAM main = $WEB_COMMIT"
+  fi
   git init -q "$WORK/web"
   git -C "$WORK/web" fetch -q --depth 1 "$UPSTREAM" "$WEB_COMMIT"
   git -C "$WORK/web" -c advice.detachedHead=false checkout -q FETCH_HEAD
@@ -82,21 +92,12 @@ tar --zstd -C "$STAGE" -cf "$DIST/.web.tmp" .
 SHA="$(sha256sum "$DIST/.web.tmp" | cut -d' ' -f1)"
 FNAME="meshtastic-web-$SHA.tar.zst"
 mv "$DIST/.web.tmp" "$DIST/$FNAME"
-export FNAME SHA WEB_COMMIT MTD_PIN CHANNEL WEB_VERSION
+export FNAME SHA WEB_COMMIT MTD_PIN CHANNEL WEB_VERSION SOURCE_COMMIT
 python3 - "$DIST/meshtastic-web.frag.json" "$DIST/$FNAME" <<'PYFRAG'
 import json, os, sys
-env = os.environ
-json.dump({
-    "stack": "meshtastic-web", "filename": env["FNAME"], "sha256": env["SHA"],
-    "size": os.path.getsize(sys.argv[2]), "built_from": env["WEB_COMMIT"],
-    "components": {"meshtastic-web": env["WEB_COMMIT"], "meshtastic": env["MTD_PIN"]},
-    "lhpc_commit": env["LHPC_COMMIT"], "builder_commit": env.get("BUILDER_COMMIT", "unknown"),
-    "target": "aarch64-trixie", "os": "trixie",
-    "container_digest": env.get("CONTAINER_DIGEST", "unknown"), "runtime_deps": [],
-    # Mandatory: the browser smoke in the runtime-test job; publish needs that job to pass.
-    "smoke": {"mode": "mandatory", "result": "passed"}, "extract_to": "runtime-root",
-    "channel": env["CHANNEL"], "web_version": env["WEB_VERSION"],
-}, open(sys.argv[1], "w"), indent=2)
+sys.path.insert(0, "/builders")
+from lib_web import web_fragment
+json.dump(web_fragment(os.environ, os.path.getsize(sys.argv[2])), open(sys.argv[1], "w"), indent=2)
 PYFRAG
 cat > "$DIST/meshtastic-web.provenance.txt" <<PROV
 meshtastic-web $CHANNEL $WEB_VERSION

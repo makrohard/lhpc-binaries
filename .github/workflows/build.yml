@@ -27,7 +27,7 @@ on:
         type: choice
         options: [plumbing-check, daemon, meshtastic, meshcom, meshtastic-web]
       source_commit:
-        description: "Source commit override (blank = the lhpc manifest pin)"
+        description: "Source commit override (blank = the lhpc manifest pin). meshtastic-web: channel dev only, a 40-hex upstream commit = DIAGNOSTIC run (smoke runs, never published)"
         required: false
         default: ""
       lhpc_ref:
@@ -174,7 +174,10 @@ jobs:
     needs: [build, runtime-test, source-check]
     # smoke_test=false is a DIAGNOSTIC build: it must never reach the release. publish.sh
     # additionally verifies the fragment's recorded smoke mode+result (defense in depth).
-    if: github.event.inputs.stack != 'plumbing-check' && github.event.inputs.smoke_test != 'false'
+    # A meshtastic-web build of a pinned upstream commit is a diagnostic too (publish.sh refuses it).
+    if: >-
+      github.event.inputs.stack != 'plumbing-check' && github.event.inputs.smoke_test != 'false'
+      && !(github.event.inputs.stack == 'meshtastic-web' && github.event.inputs.source_commit != '')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:

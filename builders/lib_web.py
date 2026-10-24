@@ -28,3 +28,23 @@ def main_bundle(index_html):
     control truncates). None when there is none."""
     m = re.search(r'<script[^>]*type="module"[^>]*src="/?([^"]+)"', index_html)
     return m.group(1) if m else None
+
+
+def web_fragment(env, size):
+    """The meshtastic-web build fragment (an index entry minus its url) from the builder's env.
+    A pinned build (SOURCE_COMMIT set) is a diagnostic: it carries `diagnostic`, which publish.sh
+    refuses and the index validator does not allow, so a published entry never has it."""
+    frag = {
+        "stack": "meshtastic-web", "filename": env["FNAME"], "sha256": env["SHA"],
+        "size": size, "built_from": env["WEB_COMMIT"],
+        "components": {"meshtastic-web": env["WEB_COMMIT"], "meshtastic": env["MTD_PIN"]},
+        "lhpc_commit": env["LHPC_COMMIT"], "builder_commit": env.get("BUILDER_COMMIT", "unknown"),
+        "target": "aarch64-trixie", "os": "trixie",
+        "container_digest": env.get("CONTAINER_DIGEST", "unknown"), "runtime_deps": [],
+        # Mandatory: the browser smoke in the runtime-test job; publish needs that job to pass.
+        "smoke": {"mode": "mandatory", "result": "passed"}, "extract_to": "runtime-root",
+        "channel": env["CHANNEL"], "web_version": env["WEB_VERSION"],
+    }
+    if env.get("SOURCE_COMMIT"):
+        frag["diagnostic"] = True
+    return frag
