@@ -73,7 +73,7 @@ carries `channel`, `web_version` and `components = {meshtastic-web: <client comm
 commit>}`: the client was smoke-tested against that meshtasticd, the `lhpc_ref` manifest's pin, taken from its own
 index-v3 meshtastic entry (publish that first). The smoke (runtime-test job, a clean Trixie container) runs that
 meshtasticd on SimRadio with `RootPath` = the client; headless Chromium connects through the client's own HTTP dialog
-and must show the node's long name (read from the daemon's log) as connected within 120 s; the same client with its
+(switching it to HTTPS as a user does: the client defaults local addresses to HTTP) and must show the node's long name (read from the daemon's log) as connected within 120 s; the same client with its
 main bundle truncated must FAIL that check. The publisher checks the client commit against upstream (a stable tag must
 name it; a dev commit must be fetchable) and files the entry under the dispatched channel; a stable and a dev entry of
 one commit are two compositions.
