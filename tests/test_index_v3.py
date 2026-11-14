@@ -163,3 +163,64 @@ def test_inputs_come_only_from_the_components_the_artifact_covers():
     st = NS(components=comps, binary=NS(covers=("meshtastic",)))
     assert recording_components(st) == ["meshtastic"]
     assert inputs_map(recording_components(st), ["f" * 64])[1] == ""
+
+
+# ---- publish.sh's merge step: the history it reads before it writes ----
+
+PUBLISH_SH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "builders", "publish.sh")
+FAKE_GH = """#!/usr/bin/env python3
+import os, sys
+a = sys.argv[1:]
+if a[:2] == ["release", "view"]:
+    print(os.environ["FAKE_ASSETS"])
+elif a[0] == "api" and a[1].endswith("/releases/tags/binaries"):
+    print('{"assets": [{"name": "index-v3.json", "id": 5}]}')
+elif a[0] == "api" and a[-1].endswith("/releases/assets/5"):
+    sys.stdout.write(open(os.environ["FAKE_INDEX"]).read())
+else:
+    sys.exit("fake gh: unexpected " + repr(a))
+"""
+
+
+def _merge_step(tmp_path, assets, live):
+    """publish.sh's own merge block (the heredoc after the asset upload), run against a fake `gh`
+    that lists `assets` and serves `live` as index-v3.json. The script before it clones the
+    controller, so only this block is run offline; its text is read from publish.sh itself."""
+    import subprocess
+    text = open(PUBLISH_SH).read()
+    head = 'python3 - "$REPO" "$REL" "$FRAG" <<\'PY\'\n'
+    assert text.count(head) == 1
+    block = text.split(head)[1].split("\nPY\n")[0]
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "gh").write_text(FAKE_GH)
+    (tmp_path / "bin" / "gh").chmod(0o755)
+    (tmp_path / "live.json").write_text(json.dumps(live))
+    frag = {k: v for k, v in _entry(7, sid="meshcom").items() if k not in ("inputs", "published_at")}
+    (tmp_path / "frag.json").write_text(json.dumps(dict(frag, stack="meshcom")))
+    (tmp_path / "dist-inputs.json").write_text(json.dumps(_entry(7)["inputs"]))
+    env = {"PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "EXPECTED_STACK": "meshcom",
+           "INDEX_NAME": "index-v3.json", "FAKE_ASSETS": "\n".join(assets),
+           "FAKE_INDEX": str(tmp_path / "live.json"),
+           "BUILDERS_DIR": os.path.join(os.path.dirname(PUBLISH_SH))}
+    return subprocess.run([sys.executable, "-", REPO, "binaries", str(tmp_path / "frag.json")],
+                          input=block, env=env, cwd=tmp_path, capture_output=True, text=True,
+                          timeout=30)
+
+
+def test_a_release_without_its_history_fails_the_publish_instead_of_starting_an_empty_one(
+        tmp_path):
+    """A failed `--clobber` (or a deleted asset) followed by the next publish read as empty and
+    replaced every stack's history with one entry. The first index of a release is made by hand."""
+    out = _merge_step(tmp_path, ["meshcom-x.tar.zst", "index.json"], {})
+    assert out.returncode != 0 and "has no index-v3.json" in out.stderr
+    assert not (tmp_path / "dist-index.json").exists()
+
+
+def test_a_listed_history_keeps_every_other_stack(tmp_path):
+    live = _publish({"schema": 3, "stacks": {}}, _entry(1))
+    out = _merge_step(tmp_path, ["index.json", "index-v3.json"], live)
+    assert out.returncode == 0, out.stderr
+    written = json.loads((tmp_path / "dist-index.json").read_text())["stacks"]
+    assert written["meshtastic"] == live["stacks"]["meshtastic"]
+    assert [e["sha256"] for e in written["meshcom"]] == [f"{7:064x}"]

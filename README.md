@@ -57,6 +57,8 @@ entry of the same composition (a rebuild) is replaced, every other composition i
 history is never cut by a count, and assets are never deleted, so a controller that is several
 releases behind still finds its own build. One entry is about 1.6 KB; the controller reads at most
 1 MiB, and a publish that would grow the file past that is refused. `rollback-binary` covers `index.json` only.
+A release without `index-v3.json` refuses the publish (an empty history would replace every
+stack's entries); a release's first one is uploaded by hand.
 
 ## meshtastic-web (index-v3.json only)
 The Meshtastic browser client as its own artifact, for the controller's `stable` and `dev` web selectors (its

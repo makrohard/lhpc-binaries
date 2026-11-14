@@ -269,8 +269,9 @@ if stack != os.environ["EXPECTED_STACK"]:      # bound in the validator too; enf
 frag["url"] = "https://github.com/%s/releases/download/%s/%s" % (repo, rel, frag["filename"])
 
 # Read the CURRENT index through the authenticated API. ONLY a positively identified missing
-# index counts as empty — any network/JSON/schema error is fatal (a transient failure must
-# never wipe the other stacks; that was a live audit finding).
+# index.json counts as empty — any network/JSON/schema error is fatal (a transient failure must
+# never wipe the other stacks; that was a live audit finding). A missing index-v3.json is fatal
+# too: it is a history, and an empty one replacing it would lose every stack's entries.
 names = subprocess.run(
     ["gh", "release", "view", rel, "--json", "assets", "--jq", ".assets[].name"],
     capture_output=True, text=True)
@@ -301,6 +302,9 @@ if name in names.stdout.split():
     # copy of the previous pointer that survives the switch below.
     if not v3:
         open("dist-index-prev.json", "wb").write(raw.stdout)
+elif v3:
+    sys.exit("FAIL: release %s has no %s -- refusing to publish into an empty history (a "
+             "release's first one is created by hand)" % (rel, name))
 if v3:
     # The HISTORY: this entry first, an older build of the same composition replaced, every
     # other composition kept. index.json, SHA256SUMS and index.prev.json are not touched.
