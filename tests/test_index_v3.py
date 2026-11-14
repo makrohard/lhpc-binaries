@@ -259,6 +259,31 @@ def test_a_publish_without_its_run_fails(tmp_path):
     assert not (tmp_path / "dist-index.json").exists()
 
 
+def test_a_publish_without_its_run_stops_before_anything_is_fetched_or_uploaded(tmp_path):
+    """publish.sh from its first line: without the runner's run id and attempt it stops before the
+    first network or release call (the provenance asset is uploaded with --clobber long before
+    the index is merged)."""
+    import subprocess
+    (tmp_path / "bin").mkdir()
+    for tool in ("gh", "git", "curl"):
+        (tmp_path / "bin" / tool).write_text(
+            f'#!/bin/sh\necho "{tool} $*" >> "{tmp_path}/calls"\nexit 1\n')
+        (tmp_path / "bin" / tool).chmod(0o755)
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "meshcom.frag.json").write_text("{}")
+    env = {"PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "GITHUB_REPOSITORY": REPO,
+           "EXPECTED_STACK": "meshcom", "EXPECTED_BUILDER_COMMIT": "d" * 40,
+           "EXPECTED_LHPC_COMMIT": "c" * 40, "EXPECTED_CONTAINER_DIGEST": "x",
+           "HOME": str(tmp_path)}
+    for missing in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
+        given = {k: v for k, v in {"GITHUB_RUN_ID": "4242", "GITHUB_RUN_ATTEMPT": "3"}.items()
+                 if k != missing}
+        out = subprocess.run(["bash", PUBLISH_SH, str(tmp_path / "out")], env=dict(env, **given),
+                             cwd=tmp_path, capture_output=True, text=True, timeout=30)
+        assert out.returncode != 0 and missing in out.stderr, out.stderr
+        assert not (tmp_path / "calls").exists(), (tmp_path / "calls").read_text()
+
+
 def test_build_run_is_optional_and_checked_when_present():
     legacy = _entry(1)
     assert "build_run" not in legacy and validate_entry_v3("meshtastic", legacy) == ""

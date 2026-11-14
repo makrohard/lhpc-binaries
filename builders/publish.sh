@@ -33,6 +33,8 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(4 if not i
   || { echo "FAIL: the fragment is a diagnostic build (or unreadable): never published" >&2; exit 4; }
 [[ "$EXPECTED_LHPC_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: EXPECTED_LHPC_COMMIT is not a 40-hex sha" >&2; exit 4; }
 
+# The run that publishes (index-v3 `build_run`), checked before anything is fetched or uploaded.
+: "${GITHUB_RUN_ID:?the publishing run id}" "${GITHUB_RUN_ATTEMPT:?the publishing run attempt}"
 echo "==> Independently re-derive built_from + components from lhpc@${EXPECTED_LHPC_COMMIT} (trusted)"
 LHPC_SRC="$(mktemp -d)"
 git clone --quiet --no-checkout https://github.com/makrohard/loraham-pi-control.git "$LHPC_SRC/lhpc"
