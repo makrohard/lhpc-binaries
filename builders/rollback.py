@@ -44,7 +44,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
-from lib_index import SCHEMA, entry_key, load_index, load_index_v3, validate_entry  # noqa: E402
+from lib_index import (SCHEMA, entry_key, load_index, load_index_v3, v3_size_error,  # noqa: E402
+                       validate_entry)
 
 INDEX = "index.json"
 INDEX_V3 = "index-v3.json"
@@ -200,8 +201,11 @@ def withdraw_v3(keys: dict, release: Release) -> list:
                 report.append(f"{sid}: {key[0][:24]}… ({key[2]}) already withdrawn")
     if not gone:
         return report
-    text = json.dumps(live, indent=2, sort_keys=True)
+    text = json.dumps(live, indent=2, sort_keys=True)     # as publish.sh writes it
     _validated_v3(text.encode(), "the index-v3 after the withdrawal")
+    err = v3_size_error(text)
+    if err:
+        raise SystemExit(f"FAIL: {err} -- refusing to withdraw; nothing was uploaded")
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / INDEX_V3
         out.write_text(text)

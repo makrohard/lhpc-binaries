@@ -285,6 +285,23 @@ def test_a_withdrawal_whose_upload_did_not_take_effect_is_not_confirmed(monkeypa
     assert rel.uploaded == ["index-v3.json"]
 
 
+def test_a_withdrawal_whose_index_would_pass_what_a_controller_reads_is_refused(monkeypatch):
+    """A compact index-v3 under 1 MiB (the first one of a release is uploaded by hand) grows when
+    it is written back as publish.sh writes it. Past the controller's 1 MiB it would be live and
+    unreadable on every box, so the withdrawal refuses before any upload."""
+    filler = [dict(DAEMON_V3, built_from=f"{i:040x}") for i in range(1100)]
+    stacks = {"meshtastic": [MINE_V3], "daemon": filler}
+    compact = json.dumps({"schema": 3, "stacks": stacks}, separators=(",", ":"))
+    assert len(compact) < lib_index.INDEX_V3_MAX_BYTES
+    assert len(json.dumps({"schema": 3, "stacks": stacks}, indent=2, sort_keys=True)) \
+        > lib_index.INDEX_V3_MAX_BYTES
+    rel = FakeReleaseV3({})
+    rel.assets["index-v3.json"] = compact.encode()
+    with pytest.raises(SystemExit, match="past the 1048576 a controller reads"):
+        _run(monkeypatch, rel, {"meshtastic": [vkey(1)]})
+    assert rel.uploaded == [] and rel.assets["index-v3.json"] == compact.encode()
+
+
 def test_a_release_without_index_v3_fails(monkeypatch):
     rel = FakeReleaseV3(None)
     with pytest.raises(SystemExit, match="no index-v3.json"):
