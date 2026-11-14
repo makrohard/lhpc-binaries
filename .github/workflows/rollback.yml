@@ -2,6 +2,8 @@
 # rebuild. It is the recovery path for an automated pin release whose proof failed AFTER its
 # candidate binaries went live: the index moves back, the artifacts stay where they are.
 #
+# Mode withdraw-v3 removes named entries from index-v3.json (a release bot's own unproven builds).
+#
 # It shares the publisher's GLOBAL `publish` concurrency group, so a rollback and a publish of
 # any stack can never interleave.
 name: rollback-binary
@@ -18,6 +20,14 @@ on:
         default: ""
       expect_json:
         description: '{"<stack>": <the entry you published>} — the rollback refuses when the live entry is not this one (someone else published in between). Blank = restore whatever is live.'
+        required: false
+        default: ""
+      mode:
+        description: "restore = index.json from the snapshot (above); withdraw-v3 = remove the entries named in keys_json from index-v3.json"
+        required: false
+        default: restore
+      keys_json:
+        description: 'withdraw-v3: {"<stack>": [[filename, sha256, fp, comp], ...]} — the exact entry keys to remove; its stacks = stacks'
         required: false
         default: ""
 
@@ -46,4 +56,6 @@ jobs:
           STACKS: ${{ github.event.inputs.stacks }}
           SNAPSHOT_JSON: ${{ github.event.inputs.snapshot_json }}
           EXPECT_JSON: ${{ github.event.inputs.expect_json }}
+          MODE: ${{ github.event.inputs.mode }}
+          KEYS_JSON: ${{ github.event.inputs.keys_json }}
         run: python3 builders/rollback.py

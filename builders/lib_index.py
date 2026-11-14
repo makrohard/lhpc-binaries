@@ -6,6 +6,8 @@ are written twice will drift, and the weaker one decides what reaches the releas
 finding). Everything an index entry must satisfy lives here.
 """
 
+import hashlib
+import json
 import re
 
 SCHEMA = 2
@@ -219,6 +221,16 @@ def composition(e):
     """An entry's composition key: what a box compares before it downloads."""
     return (e["target"], e.get("channel"), sorted(e["components"].items()),
             sorted(e["inputs"].items()))
+
+
+def entry_key(e):
+    """An index-v3 entry as `[filename, sha256, fp, comp]`, the release bot's snapshot key:
+    `fp` stands for the whole entry, `comp` for its composition, each the first 16 hex of the
+    sha256 of its canonical JSON. The bot computes the same key (tests/entry_key_vectors.json)."""
+    def digest(value):
+        canon = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canon.encode()).hexdigest()[:16]
+    return [e["filename"], e["sha256"], digest(e), digest(composition(e))]
 
 
 def v3_size_error(text):

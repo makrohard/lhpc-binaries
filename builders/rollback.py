@@ -19,7 +19,14 @@ What this refuses to do, and why:
 It runs under the publisher's own `publish` concurrency group, so it cannot interleave with a
 publish of the same repository.
 
+Mode `withdraw-v3` removes entries from `index-v3.json` instead (`withdraw_v3`): the release
+bot's own unproven builds, each named by its exact `entry_key`. It refuses when an entry of the
+same file and sha256 is live with other provenance (another publisher), so it never removes
+somebody else's entry.
+
 Env:
+  MODE           `restore` (default; index.json, as below) or `withdraw-v3`
+  KEYS_JSON      withdraw-v3: {stack: [[filename, sha256, fp, comp], ...]}; its stacks = STACKS
   STACKS         comma-separated stack ids to restore (required)
   SNAPSHOT_JSON  the index to restore FROM (optional; default: the published index.prev.json)
   EXPECT_JSON    {stack: entry} the caller published and expects to find live (optional but
@@ -37,9 +44,10 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.environ.get("BUILDERS_DIR", "builders"))
-from lib_index import SCHEMA, load_index, validate_entry  # noqa: E402
+from lib_index import SCHEMA, entry_key, load_index, load_index_v3, validate_entry  # noqa: E402
 
 INDEX = "index.json"
+INDEX_V3 = "index-v3.json"
 PREV = "index.prev.json"
 SUMS = "SHA256SUMS"
 
@@ -157,6 +165,73 @@ def rollback(stacks: list, snapshot: dict, expect: dict, release: Release) -> li
     return report
 
 
+def _validated_v3(raw: bytes, what: str) -> dict:
+    try:
+        idx, err = load_index_v3(json.loads(raw))
+    except (ValueError, TypeError) as exc:
+        raise SystemExit(f"FAIL: {what} is not a readable index ({exc})") from None
+    if err:
+        raise SystemExit(f"FAIL: {what}: {err}")
+    return idx
+
+
+def withdraw_v3(keys: dict, release: Release) -> list:
+    """Remove each named entry from index-v3.json. Per key, in this order: the exact key is live
+    -> remove it; absent, but the same filename + sha256 is live under another key -> FAIL (that
+    is another publisher's entry); absent -> already withdrawn. Nothing is uploaded unless every
+    key passes, and the upload is read back."""
+    try:
+        live = _validated_v3(release.read_asset(INDEX_V3), "the live index-v3")
+    except FileNotFoundError:
+        raise SystemExit(f"FAIL: the release has no {INDEX_V3} -- nothing to withdraw "
+                         "from") from None
+    report, gone = [], []
+    for sid in sorted(keys):
+        for key in keys[sid]:
+            history = live["stacks"].get(sid, [])
+            if any(entry_key(e) == key for e in history):
+                live["stacks"][sid] = [e for e in history if entry_key(e) != key]
+                gone.append((sid, key))
+                report.append(f"{sid}: withdraw {key[0][:24]}… ({key[2]})")
+            elif any([e["filename"], e["sha256"]] == key[:2] for e in history):
+                raise SystemExit(f"FAIL: {sid}: {key[0]} is live with other provenance than "
+                                 f"{key[2]} -- another publisher's entry; refusing to withdraw it")
+            else:
+                report.append(f"{sid}: {key[0][:24]}… ({key[2]}) already withdrawn")
+    if not gone:
+        return report
+    text = json.dumps(live, indent=2, sort_keys=True)
+    _validated_v3(text.encode(), "the index-v3 after the withdrawal")
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / INDEX_V3
+        out.write_text(text)
+        release.upload(out)
+    back = _validated_v3(release.read_asset(INDEX_V3),
+                         "the index-v3 read back after the withdrawal")
+    for sid, key in gone:
+        if any(entry_key(e) == key for e in back["stacks"].get(sid, [])):
+            raise SystemExit(f"FAIL: {sid}: {key[0]} is still live after the upload -- "
+                             "the withdrawal is NOT confirmed")
+    report.append(f"index-v3 read back, withdrawn: {', '.join(sorted({s for s, _ in gone}))}")
+    return report
+
+
+def _keys(raw: str, stacks: list):
+    """KEYS_JSON as {stack: [key, ...]}, or None when it is malformed or names other stacks."""
+    try:
+        keys = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(keys, dict) or sorted(keys) != sorted(stacks):
+        return None
+    for klist in keys.values():
+        if not isinstance(klist, list) or not klist or not all(
+                isinstance(k, list) and len(k) == 4 and all(isinstance(x, str) for x in k)
+                for k in klist):
+            return None
+    return keys
+
+
 def main() -> int:
     stacks = [s.strip() for s in os.environ.get("STACKS", "").split(",") if s.strip()]
     if not stacks:
@@ -164,6 +239,19 @@ def main() -> int:
         return 2
     repo = os.environ["GITHUB_REPOSITORY"]
     release = Release(repo, os.environ.get("RELEASE_TAG", "binaries"))
+    mode = os.environ.get("MODE", "").strip() or "restore"
+    if mode == "withdraw-v3":
+        keys = _keys(os.environ.get("KEYS_JSON", ""), stacks)
+        if keys is None:
+            print("FAIL: KEYS_JSON must be {stack: [[filename, sha256, fp, comp], ...]} for "
+                  "exactly the STACKS", file=sys.stderr)
+            return 2
+        for line in withdraw_v3(keys, release):
+            print(f"  {line}")
+        return 0
+    if mode != "restore":
+        print(f"FAIL: unknown MODE {mode!r} (restore or withdraw-v3)", file=sys.stderr)
+        return 2
 
     raw = os.environ.get("SNAPSHOT_JSON", "").strip()
     if raw:
