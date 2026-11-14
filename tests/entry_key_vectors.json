@@ -1,0 +1,184 @@
+{
+ "_about": "index-v3 entry_key vectors shared by lhpc-binaries and lhpc-release-bot; the keys were computed by the bot's cli.entry_key; the same file is in both repos",
+ "vectors": [
+  {
+   "entry": {
+    "builder_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "built_from": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "components": {
+     "meshtastic": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "container_digest": "debian@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "extract_to": "runtime-root",
+    "filename": "meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst",
+    "inputs": {
+     "meshtastic": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "lhpc_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "os": "trixie",
+    "published_at": "2026-10-16T08:00:00Z",
+    "runtime_deps": [
+     "libgpiod2"
+    ],
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+    "size": 11,
+    "smoke": {
+     "mode": "mandatory",
+     "result": "passed"
+    },
+    "target": "aarch64-trixie",
+    "url": "https://github.com/o/r/releases/download/binaries/meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst"
+   },
+   "key": [
+    "meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst",
+    "0000000000000000000000000000000000000000000000000000000000000001",
+    "9222ab045b725f8d",
+    "239617b578733dbf"
+   ],
+   "stack": "meshtastic"
+  },
+  {
+   "entry": {
+    "build_run": "43617170998.1",
+    "builder_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "built_from": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "components": {
+     "meshtastic": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "container_digest": "debian@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "extract_to": "runtime-root",
+    "filename": "meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst",
+    "inputs": {
+     "meshtastic": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "lhpc_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "os": "trixie",
+    "published_at": "2026-10-16T08:00:00Z",
+    "runtime_deps": [
+     "libgpiod2"
+    ],
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+    "size": 11,
+    "smoke": {
+     "mode": "mandatory",
+     "result": "passed"
+    },
+    "target": "aarch64-trixie",
+    "url": "https://github.com/o/r/releases/download/binaries/meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst"
+   },
+   "key": [
+    "meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst",
+    "0000000000000000000000000000000000000000000000000000000000000001",
+    "58d97abf169f349e",
+    "239617b578733dbf"
+   ],
+   "stack": "meshtastic"
+  },
+  {
+   "entry": {
+    "build_run": "43617170998.2",
+    "builder_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "built_from": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "components": {
+     "meshtastic": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "container_digest": "debian@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "extract_to": "runtime-root",
+    "filename": "meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst",
+    "inputs": {
+     "meshtastic": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "lhpc_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "os": "trixie",
+    "published_at": "2026-10-16T08:00:00Z",
+    "runtime_deps": [
+     "libgpiod2"
+    ],
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+    "size": 11,
+    "smoke": {
+     "mode": "mandatory",
+     "result": "passed"
+    },
+    "target": "aarch64-trixie",
+    "url": "https://github.com/o/r/releases/download/binaries/meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst"
+   },
+   "key": [
+    "meshtastic-0000000000000000000000000000000000000000000000000000000000000001.tar.zst",
+    "0000000000000000000000000000000000000000000000000000000000000001",
+    "0f4abca2b7adbd89",
+    "239617b578733dbf"
+   ],
+   "stack": "meshtastic"
+  },
+  {
+   "entry": {
+    "build_run": "7.1",
+    "builder_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "built_from": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "components": {
+     "daemon": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "container_digest": "debian@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "extract_to": "runtime-root",
+    "filename": "daemon-0000000000000000000000000000000000000000000000000000000000000002.tar.zst",
+    "inputs": {},
+    "lhpc_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "os": "trixie",
+    "published_at": "2026-10-16T08:00:00Z",
+    "runtime_deps": [],
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+    "size": 12,
+    "smoke": {
+     "mode": "mandatory",
+     "result": "passed"
+    },
+    "target": "aarch64-trixie",
+    "url": "https://github.com/o/r/releases/download/binaries/daemon-0000000000000000000000000000000000000000000000000000000000000002.tar.zst"
+   },
+   "key": [
+    "daemon-0000000000000000000000000000000000000000000000000000000000000002.tar.zst",
+    "0000000000000000000000000000000000000000000000000000000000000002",
+    "b908e6b6cb742101",
+    "2727410c9c91c291"
+   ],
+   "stack": "daemon"
+  },
+  {
+   "entry": {
+    "build_run": "9.3",
+    "builder_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "built_from": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "channel": "stable",
+    "components": {
+     "meshtastic": "2222222222222222222222222222222222222222",
+     "meshtastic-web": "1111111111111111111111111111111111111111"
+    },
+    "container_digest": "debian@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "extract_to": "runtime-root",
+    "filename": "meshtastic-web-0000000000000000000000000000000000000000000000000000000000000003.tar.zst",
+    "inputs": {},
+    "lhpc_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "os": "trixie",
+    "published_at": "2026-10-16T08:00:00Z",
+    "runtime_deps": [],
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000003",
+    "size": 13,
+    "smoke": {
+     "mode": "mandatory",
+     "result": "passed"
+    },
+    "target": "aarch64-trixie",
+    "url": "https://github.com/o/r/releases/download/binaries/meshtastic-web-0000000000000000000000000000000000000000000000000000000000000003.tar.zst",
+    "web_version": "v2.6.4"
+   },
+   "key": [
+    "meshtastic-web-0000000000000000000000000000000000000000000000000000000000000003.tar.zst",
+    "0000000000000000000000000000000000000000000000000000000000000003",
+    "0465a54b10ba9783",
+    "008b235f2098222a"
+   ],
+   "stack": "meshtastic-web"
+  }
+ ]
+}

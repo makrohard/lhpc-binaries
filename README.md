@@ -58,7 +58,8 @@ A **composition** is (`target`, `components`, `inputs`). A publish puts its entr
 entry of the same composition (a rebuild) is replaced, every other composition is kept. The
 history is never cut by a count, and assets are never deleted, so a controller that is several
 releases behind still finds its own build. One entry is about 1.6 KB; the controller reads at most
-1 MiB, and a publish that would grow the file past that is refused. `rollback-binary` covers `index.json` only.
+1 MiB, and a publish that would grow the file past that is refused. `rollback-binary` restores
+`index.json` only; its `withdraw-v3` mode removes named entries from `index-v3.json` (see Rolling back).
 A release without `index-v3.json` refuses the publish (an empty history would replace every
 stack's entries); a release's first one is uploaded by hand.
 
@@ -116,6 +117,13 @@ It runs in the publisher's own concurrency group and refuses rather than guesses
   is never reported as a successful rollback.
 
 Nothing from an artifact is executed: names, bytes and hashes only.
+
+`mode` = `withdraw-v3` removes entries from `index-v3.json` instead, each named by its exact key
+in `keys_json` (`{"<stack>": [[filename, sha256, fp, comp], …]}`, the release bot's `entry_key`:
+`fp`/`comp` = the first 16 hex of the sha256 of the entry's / its composition's canonical JSON;
+its stacks = `stacks`). Per key: live → removed; absent, but the same filename + sha256 live
+under another key (another publisher's entry) → the run fails and nothing is uploaded; absent →
+already withdrawn. The upload is read back. Artifacts stay published.
 
 ## Scope
 `meshtastic` (meshtasticd, headless), `meshcom` (qemu-system-xtensa + firmware + bridge), `daemon`.
