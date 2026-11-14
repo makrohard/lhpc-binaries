@@ -310,6 +310,8 @@ if v3:
     # other composition kept. index.json, SHA256SUMS and index.prev.json are not touched.
     frag["inputs"] = json.load(open("dist-inputs.json"))
     frag["published_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    # Which run published it (the runner's own environment, never the build job's fragment).
+    frag["build_run"] = "%s.%s" % (os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
     err = validate_entry_v3(stack, frag)
     if err:
         sys.exit("FAIL: " + err)

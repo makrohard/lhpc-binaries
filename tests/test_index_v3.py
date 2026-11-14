@@ -183,7 +183,7 @@ else:
 """
 
 
-def _merge_step(tmp_path, assets, live):
+def _merge_step(tmp_path, assets, live, frag_extra=None, run=("4242", "3")):
     """publish.sh's own merge block (the heredoc after the asset upload), run against a fake `gh`
     that lists `assets` and serves `live` as index-v3.json. The script before it clones the
     controller, so only this block is run offline; its text is read from publish.sh itself."""
@@ -197,12 +197,14 @@ def _merge_step(tmp_path, assets, live):
     (tmp_path / "bin" / "gh").chmod(0o755)
     (tmp_path / "live.json").write_text(json.dumps(live))
     frag = {k: v for k, v in _entry(7, sid="meshcom").items() if k not in ("inputs", "published_at")}
-    (tmp_path / "frag.json").write_text(json.dumps(dict(frag, stack="meshcom")))
+    (tmp_path / "frag.json").write_text(json.dumps(dict(frag, stack="meshcom", **(frag_extra or {}))))
     (tmp_path / "dist-inputs.json").write_text(json.dumps(_entry(7)["inputs"]))
     env = {"PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "EXPECTED_STACK": "meshcom",
            "INDEX_NAME": "index-v3.json", "FAKE_ASSETS": "\n".join(assets),
            "FAKE_INDEX": str(tmp_path / "live.json"),
            "BUILDERS_DIR": os.path.join(os.path.dirname(PUBLISH_SH))}
+    if run is not None:      # a runner always sets both; None = a publish outside Actions
+        env.update(GITHUB_RUN_ID=run[0], GITHUB_RUN_ATTEMPT=run[1])
     return subprocess.run([sys.executable, "-", REPO, "binaries", str(tmp_path / "frag.json")],
                           input=block, env=env, cwd=tmp_path, capture_output=True, text=True,
                           timeout=30)
@@ -224,3 +226,45 @@ def test_a_listed_history_keeps_every_other_stack(tmp_path):
     written = json.loads((tmp_path / "dist-index.json").read_text())["stacks"]
     assert written["meshtastic"] == live["stacks"]["meshtastic"]
     assert [e["sha256"] for e in written["meshcom"]] == [f"{7:064x}"]
+
+
+# ---- build_run: which workflow run (id + attempt) published an entry ----
+
+def test_the_published_entry_names_its_run_and_attempt(tmp_path):
+    """A release bot tells its own entry from another run's identical build by this field; a re-run
+    of one workflow run is another attempt, so the attempt is part of it."""
+    live = _publish({"schema": 3, "stacks": {}}, _entry(1))
+    out = _merge_step(tmp_path, ["index.json", "index-v3.json"], live, run=("4242", "3"))
+    assert out.returncode == 0, out.stderr
+    written = json.loads((tmp_path / "dist-index.json").read_text())
+    assert written["stacks"]["meshcom"][0]["build_run"] == "4242.3"
+    assert load_index_v3(written)[1] == ""
+    assert "build_run" not in written["stacks"]["meshtastic"][0]   # a kept entry is not rewritten
+
+
+def test_the_fragment_cannot_name_its_own_run(tmp_path):
+    """The fragment comes from the build job (untrusted); the run comes from the publisher's runner."""
+    live = _publish({"schema": 3, "stacks": {}}, _entry(1))
+    out = _merge_step(tmp_path, ["index.json", "index-v3.json"], live,
+                      frag_extra={"build_run": "1.1"}, run=("4242", "3"))
+    assert out.returncode == 0, out.stderr
+    written = json.loads((tmp_path / "dist-index.json").read_text())
+    assert written["stacks"]["meshcom"][0]["build_run"] == "4242.3"
+
+
+def test_a_publish_without_its_run_fails(tmp_path):
+    live = _publish({"schema": 3, "stacks": {}}, _entry(1))
+    out = _merge_step(tmp_path, ["index.json", "index-v3.json"], live, run=None)
+    assert out.returncode != 0 and "GITHUB_RUN_ID" in out.stderr
+    assert not (tmp_path / "dist-index.json").exists()
+
+
+def test_build_run_is_optional_and_checked_when_present():
+    legacy = _entry(1)
+    assert "build_run" not in legacy and validate_entry_v3("meshtastic", legacy) == ""
+    assert validate_entry_v3("meshtastic", dict(_entry(1), build_run="43617170998.2")) == ""
+    for bad in (4242, "4242", "4242.", ".3", "4242.3.1", "a.3", "4242.3\n", "\u0664.3", ""):
+        assert "build_run" in validate_entry_v3("meshtastic", dict(_entry(1), build_run=bad)), bad
+    # a legacy history still loads, beside a new entry
+    idx = _publish({"schema": 3, "stacks": {}}, _entry(1))
+    _publish(idx, dict(_entry(2), build_run="7.1"))

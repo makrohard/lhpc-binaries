@@ -18,6 +18,10 @@ SIDECAR = ".lhpc-build-inputs"
 # past it would fail on every box at once, so the publish refuses it instead (it is never cut).
 INDEX_V3_MAX_BYTES = 1 << 20
 _V3_FIELDS = {"inputs": dict, "published_at": str}
+# Optional publisher field: "<GITHUB_RUN_ID>.<GITHUB_RUN_ATTEMPT>" of the publishing run, so a
+# release bot can tell its own entry from another run's identical build. Entries published before
+# it have none and stay valid.
+_V3_OPTIONAL = {"build_run": str}
 # The Meshtastic web client (B2): a schema-3-only stack whose entries also say which channel they
 # serve and which client version they are, and pair the client with the meshtasticd it was
 # smoke-tested against.
@@ -150,13 +154,17 @@ def inputs_map(recording, sidecar_digests):
 
 def validate_entry_v3(sid, e):
     """A schema-3 entry: a valid schema-2 entry plus `inputs` and `published_at` (and, for the web
-    client, `channel` and `web_version`)."""
+    client, `channel` and `web_version`); `build_run` is optional."""
     if not isinstance(e, dict):
         return f"entry {sid!r} is not an object"
     extra = _WEB_FIELDS if sid == WEB_STACK else {}
-    err = validate_entry(sid, {k: v for k, v in e.items() if k not in _V3_FIELDS and k not in extra})
+    err = validate_entry(sid, {k: v for k, v in e.items()
+                               if k not in _V3_FIELDS and k not in _V3_OPTIONAL and k not in extra})
     if err:
         return err
+    if "build_run" in e and not (isinstance(e["build_run"], str)
+                                 and re.fullmatch(r"[0-9]+\.[0-9]+", e["build_run"])):
+        return f"entry {sid!r}: build_run is not <run id>.<run attempt>"
     for k, t in _V3_FIELDS.items():
         if not isinstance(e.get(k), t):
             return f"entry {sid!r}: field {k!r} missing or not {t.__name__}"

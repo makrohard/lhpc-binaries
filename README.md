@@ -51,6 +51,8 @@ newest first. An entry is a schema-2 entry plus:
   client, is not in the artifact and is not a key. More than one such component, or another
   number of sidecars in the artifact, refuses the publish.
 - `published_at`: UTC `YYYY-MM-DDTHH:MM:SSZ`.
+- `build_run`: `"<run id>.<run attempt>"` of the publishing workflow run (from the runner's
+  `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`). Optional: entries published before it have none.
 
 A **composition** is (`target`, `components`, `inputs`). A publish puts its entry first; an older
 entry of the same composition (a rebuild) is replaced, every other composition is kept. The
