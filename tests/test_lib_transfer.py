@@ -57,10 +57,12 @@ def test_a_build_ended_by_a_transfer_is_one(text, decided):
     "ERROR: meson setup failed\nERROR: Git command failed\nERROR: meson setup failed\n",
     "A wrapper over an error of its own:\nerror: patch does not apply\nERROR: meson setup failed\n",
     "Compiling ... done\n",
+    # A transport word on a line that is not an error line: a progress note, not the failure.
+    "Retrying in 5 s: connection timed out\n",
     "",
 ], ids=["recovered-then-compile-error", "http-404", "http-404-transport-word-in-url",
         "platformio-404-transport-word-in-url", "three-wrappers-deep", "wrapper-over-own-error",
-        "no-error-line", "empty"])
+        "no-error-line", "transport-word-not-an-error-line", "empty"])
 def test_anything_else_is_not(text):
     assert lt.decisive_transfer(text) == ""
 
