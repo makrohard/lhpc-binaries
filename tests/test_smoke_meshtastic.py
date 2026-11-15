@@ -35,7 +35,10 @@ FAKE = textwrap.dedent('''\
         def log_message(self, *a):
             pass
     if mode != "noweb":
-        web = http.server.ThreadingHTTPServer(("127.0.0.1", int(os.environ["SMOKE_WEB_PORT"])), H)
+        # Like meshtasticd: the web port is the one its config (-c) names.
+        conf = open(sys.argv[sys.argv.index("-c") + 1]).read()
+        port = int(conf.split("Webserver:")[1].split("Port:")[1].split()[0])
+        web = http.server.ThreadingHTTPServer(("127.0.0.1", port), H)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(home + "/c.pem", home + "/k.pem")
         web.socket = ctx.wrap_socket(web.socket, server_side=True)
         threading.Thread(target=web.serve_forever, daemon=True).start()
