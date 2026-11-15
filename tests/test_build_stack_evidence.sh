@@ -76,6 +76,8 @@ echo "  ok: a successful build writes nothing"
 export BUILD_TRANSFER_WAITS="0 0"
 STEPLOG="$TMP/root/logs/build-meshcore-node-1.log"
 repeat_case() {  # why, failures before a pass, step-log text, expected calls, expected rc (0|red), extra check
+  # "red" means lhpc's OWN exit status (7 here) comes back: a red reached any other way — the
+  # repeat loop failing on its own, say — is not the build's failure and does not pass.
   local why="$1" fails="$2" text="$3" calls="$4" want="$5" grepfor="${6:-}" got rc log="$TMP/run.log"
   rm -f "$TMP/out/meshcore.regression" "$TMP/calls"
   printf '%s' "$text" > "$STEPLOG"
@@ -83,15 +85,15 @@ repeat_case() {  # why, failures before a pass, step-log text, expected calls, e
 #!/usr/bin/env bash
 echo x >> "$TMP/calls"
 [ "\$(wc -l < "$TMP/calls")" -gt $fails ] && exit 0
-echo "  [failed] build meshcore-node (rc 1, log $STEPLOG)"
-exit 1
+echo "  [failed] build meshcore-node (rc 7, log $STEPLOG)"
+exit 7
 SH
   chmod +x "$LHPC"
   set +e; ( source "$LIB"; build_stack meshcore ) > "$log" 2>&1; rc=$?; set -e
   got="$(wc -l < "$TMP/calls")"
   [ "$got" = "$calls" ] || { echo "FAIL: $why — $got calls, want $calls"; cat "$log"; exit 1; }
   if [ "$want" = 0 ]; then [ "$rc" = 0 ] || { echo "FAIL: $why — rc $rc"; exit 1; }
-  else [ "$rc" != 0 ] || { echo "FAIL: $why — green"; exit 1; }; fi
+  else [ "$rc" = 7 ] || { echo "FAIL: $why — rc $rc, want lhpc's own 7"; cat "$log"; exit 1; }; fi
   [ -z "$grepfor" ] || grep -qF -- "$grepfor" "$log" || { echo "FAIL: $why — no '$grepfor'"; cat "$log"; exit 1; }
   echo "  ok: $why"
 }
