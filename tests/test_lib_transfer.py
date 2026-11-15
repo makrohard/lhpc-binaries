@@ -15,6 +15,10 @@ _SPEC = importlib.util.spec_from_file_location(
 lt = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(lt)
 
+# lhpc writes this line last in every build step's log since v0.11.10 (lhpc/core/jobs.py, written as
+# "\n" + progress.quiet_line(s) + "\n"). Every step log here ends the same way.
+QUIET = "\n[progress] longest quiet 7.8 s\n"
+
 # build-binary 34133564060 (meshtastic, 2026-09-07): a PlatformIO library download.
 PIO_504 = """\
 Library Manager: TBPubSubClient@2.12.1 has been installed!
@@ -40,7 +44,8 @@ ERROR: meson setup failed
     ("curl: (6) Could not resolve host: github.com\n", "Could not resolve host"),
 ], ids=["platformio-504", "meson-git-503", "curl-dns"])
 def test_a_build_ended_by_a_transfer_is_one(text, decided):
-    assert decided in lt.decisive_transfer(text)
+    assert decided in lt.decisive_transfer(text + QUIET)
+    assert decided in lt.decisive_transfer(text), "and in a log from before lhpc wrote that line"
 
 
 @pytest.mark.parametrize("text", [
@@ -64,12 +69,13 @@ def test_a_build_ended_by_a_transfer_is_one(text, decided):
         "platformio-404-transport-word-in-url", "three-wrappers-deep", "wrapper-over-own-error",
         "no-error-line", "transport-word-not-an-error-line", "empty"])
 def test_anything_else_is_not(text):
+    assert lt.decisive_transfer(text + QUIET) == ""
     assert lt.decisive_transfer(text) == ""
 
 
 def test_the_failing_steps_own_log_is_read_not_the_summary(tmp_path):
     log = tmp_path / "build-meshcom-qemu-1.log"
-    log.write_text(MESON_503)
+    log.write_text(MESON_503 + QUIET)
     out = (f"  [ok] build meshcom-bridge\n  [failed] build meshcom-qemu (rc 1, log {log})\n"
            "ERR   build failed\n")
     assert "returned error: 503" in lt.decisive_transfer(lt.step_text(out))
@@ -91,15 +97,15 @@ def test_the_command_prints_the_deciding_line_only_for_a_transfer(tmp_path, caps
 def test_the_whole_step_log_is_read_however_long_its_blank_tail(tmp_path):
     """No tail window: the 504 that ended the step decides behind 30 000 blank lines."""
     log = tmp_path / "build-meshtastic-1.log"
-    log.write_text(PIO_504 + "\n" * 30000)
+    log.write_text(PIO_504 + "\n" * 30000 + QUIET)
     out = f"  [failed] build meshtastic (rc 1, log {log})\n"
     assert "status code '504'" in lt.decisive_transfer(lt.step_text(out))
 
 
 def test_the_last_typed_failure_names_the_log_that_decides(tmp_path):
     first, last = tmp_path / "build-a-1.log", tmp_path / "build-b-1.log"
-    first.write_text("src/a.c:1:1: error: boom\n")
-    last.write_text(PIO_504)
+    first.write_text("src/a.c:1:1: error: boom\n" + QUIET)
+    last.write_text(PIO_504 + QUIET)
     out = (f"  [failed] build a (rc 1, log {first})\n  [failed] build b (rc 1, log {last})\n")
     assert "status code '504'" in lt.decisive_transfer(lt.step_text(out))
 
@@ -121,6 +127,7 @@ RECOVERED = "curl: (56) Recv failure: Connection reset by peer\nretrying ... ok\
 def test_a_transfer_followed_by_any_other_ending_is_not_repeated(ending):
     """Default deny: after the transfer line only blank lines, the wrappers and meson's log pointer
     may come; any other ending decides, and it is no transfer."""
+    assert lt.decisive_transfer(RECOVERED + ending + QUIET) == ""
     assert lt.decisive_transfer(RECOVERED + ending) == ""
     assert lt.decisive_transfer(RECOVERED.splitlines()[0]) != "", "alone, that line is a transfer"
 
@@ -130,10 +137,20 @@ def test_a_transfer_followed_by_any_other_ending_is_not_repeated(ending):
     "src/net.c:4:10: fatal error: timed out.h: No such file or directory\n",
 ], ids=["error", "fatal-error"])
 def test_a_compiler_diagnostic_is_never_a_transfer_whatever_it_names(line):
-    assert lt.decisive_transfer(line) == ""
+    assert lt.decisive_transfer(line + QUIET) == ""
 
 
 def test_a_meson_download_failure_with_a_5xx_is_one():
     line = ("../qemu/meson.build:12:0: ERROR: Download failed: HTTP Error 503: Service Unavailable"
             " (https://wrapdb.mesonbuild.com/v2/zlib/get_patch)\n")
-    assert "HTTP Error 503" in lt.decisive_transfer(line)
+    assert "HTTP Error 503" in lt.decisive_transfer(line + QUIET)
+
+
+def test_lhpcs_last_line_is_skipped_only_whole_and_a_killed_step_still_decides():
+    """lhpc's own trailers: its quiet line is passed over; its TIMED OUT marker decides (a killed
+    step is not a transfer); a line merely starting like the quiet line decides like any other."""
+    assert "status code '504'" in lt.decisive_transfer(PIO_504 + QUIET)
+    killed = ("\n[TIMED OUT — stalled: no CPU, output or I/O for 10 min — job was KILLED; result is "
+              "INCOMPLETE]\n")
+    assert lt.decisive_transfer(PIO_504 + killed + QUIET) == ""
+    assert lt.decisive_transfer(PIO_504 + "\n[progress] longest quiet 7.8 s; then: boom\n") == ""

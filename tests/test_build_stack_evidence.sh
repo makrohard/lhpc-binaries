@@ -75,12 +75,16 @@ echo "  ok: a successful build writes nothing"
 # ---- a failure that a TRANSFER ended is repeated, at most twice; nothing else is ----
 export BUILD_TRANSFER_WAITS="0 0"
 STEPLOG="$TMP/root/logs/build-meshcore-node-1.log"
+# The line lhpc writes last in every build step's log, made by the controller's own code: a step
+# log here ends the way a real one does, and a change of that line's form fails this test.
+QUIET="$(PYTHONPATH="$LHPC_SRC" python3 -c 'from lhpc.core.progress import quiet_line; print(quiet_line(7.8))')"
+[ -n "$QUIET" ] || { echo "FAIL: the controller's quiet_line could not be read"; exit 1; }
 repeat_case() {  # why, failures before a pass, step-log text, expected calls, expected rc (0|red), extra check
   # "red" means lhpc's OWN exit status (7 here) comes back: a red reached any other way — the
   # repeat loop failing on its own, say — is not the build's failure and does not pass.
   local why="$1" fails="$2" text="$3" calls="$4" want="$5" grepfor="${6:-}" got rc log="$TMP/run.log"
   rm -f "$TMP/out/meshcore.regression" "$TMP/calls"
-  printf '%s' "$text" > "$STEPLOG"
+  printf '%s\n%s\n' "$text" "$QUIET" > "$STEPLOG"
   cat > "$LHPC" <<SH
 #!/usr/bin/env bash
 echo x >> "$TMP/calls"
@@ -116,7 +120,7 @@ BUILD_T0=$(( $(date +%s) - 6000 )) repeat_case "no time left: not repeated" 1 "$
 
 # An attributed own-step failure writes evidence and is never repeated, transfer line or not.
 rm -f "$TMP/out/meshcore.regression" "$TMP/calls"
-printf '%s\n' "$PIO" > "$TMP/root/logs/$(basename "$OWNED")"
+printf '%s\n\n%s\n' "$PIO" "$QUIET" > "$TMP/root/logs/$(basename "$OWNED")"
 printf '#!/usr/bin/env bash\necho x >> %q\necho %q\nexit 1\n' "$TMP/calls" \
   "  [failed] build x (rc 1, log $TMP/root/logs/$(basename "$OWNED"))" > "$LHPC"; chmod +x "$LHPC"
 ( source "$LIB"; build_stack meshcore ) >/dev/null 2>&1 || true

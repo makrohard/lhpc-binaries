@@ -13,7 +13,8 @@ The text judged is the failing step's own log, named by the last `[failed] build
 `lhpc build` output without those lines. Its decisive line is its last error line; two wrapper
 lines that only restate the error above them (`meson setup failed`, `Git command failed`) hand the
 decision to the line above, at most twice. Default deny: the deciding line is the first line from the
-end that is not blank, not one of those wrappers and not meson's log pointer; when that line is not a
+end that is not blank, not one of those wrappers, not meson's log pointer and not lhpc's own last
+line (`[progress] longest quiet N s`); when that line is not a
 transfer error (a compile or link failure, a make/ninja/CMake end line, any output not known here),
 nothing is repeated, whatever transfer line came earlier.
 
@@ -43,8 +44,11 @@ TRANSPORT = re.compile(
 # (a 4xx) never is, whatever else the line holds (a URL can contain "ReadTimeoutError").
 HTTP_STATUS = re.compile(r"(?:returned error|HTTP [Ee]rror):? (\d{3})|status code '(\d{3})'")
 WRAPPER_STEPS = 2
-# What may follow the deciding line besides blank lines and the wrappers (meson's pointer).
-TRAILER = re.compile(r"A full log can be found at ")
+# What may follow the deciding line besides blank lines and the wrappers, each a whole line: meson's
+# log pointer, and the line lhpc itself writes last in every build step's log since v0.11.10
+# (lhpc/core/jobs.py `progress.quiet_line`: "[progress] longest quiet 7.8 s"). lhpc's other
+# trailer, `[TIMED OUT ... job was KILLED ...]`, is not here: a killed step is no transfer.
+TRAILER = re.compile(r"A full log can be found at .*|\[progress\] longest quiet \d+(?:\.\d+)? s")
 # gcc/clang: `file:line[:col]: [fatal ]error:` (lowercase). Meson's `file:l:c: ERROR:` is not one.
 COMPILER = re.compile(r"\S+:\d+(?::\d+)?: (?:fatal )?error:")
 
@@ -63,13 +67,14 @@ def step_text(output: str) -> str:
 
 def decisive_transfer(text: str) -> str:
     """The deciding line when it is a transfer failure, else "". Default deny: read from the end,
-    only blank lines, meson's "A full log can be found at" and at most two wrapper lines may come
+    only blank lines, meson's "A full log can be found at", lhpc's "[progress] longest quiet N s" and
+    at most two wrapper lines may come
     after the deciding line; the first other line decides, and anything but a transfer error there
     (a compile or link failure, a make/ninja/CMake end line, any unknown output) means no repeat."""
     wrappers = 0
     for raw in reversed(text.splitlines()):
         line = raw.strip()
-        if not line or TRAILER.match(line):
+        if not line or TRAILER.fullmatch(line):
             continue
         if WRAPPER.search(line) and wrappers < WRAPPER_STEPS:
             wrappers += 1
