@@ -172,30 +172,47 @@ run_smoke() {
 build_stack() {
   # `$OUT_DIR` is the artifact hand-off directory; the container mounts it at /out. Named rather
   # than hard-coded so this can be driven outside the container by its own test.
-  local stack="$1" cap rc out_dir="${OUT_DIR:-/out}"
+  local stack="$1" cap rc out_dir="${OUT_DIR:-/out}" marker line k=0 waits
+  # A failure that a TRANSFER ended (lib_transfer.py: the failing step's own last error is a
+  # network or server failure) is repeated, at most twice, after a wait. Nothing else is: the
+  # regression check comes first, and evidence written means the recipe broke.
+  read -r -a waits <<< "${BUILD_TRANSFER_WAITS:-60 180}"
   cap="$(mktemp)"
-  set +e
-  "$LHPC" build "$stack" --yes 2>&1 | tee "$cap"
-  rc="${PIPESTATUS[0]}"
-  set -e
-  [ "$rc" = 0 ] && { rm -f "$cap"; return 0; }
+  while :; do
+    set +e
+    "$LHPC" build "$stack" --yes 2>&1 | tee "$cap"
+    rc="${PIPESTATUS[0]}"
+    set -e
+    [ "$rc" = 0 ] && { rm -f "$cap"; return 0; }
 
-  echo "=== lhpc build log (tail) ==="
-  cat "$ROOT"/logs/build-"$stack"*.log 2>/dev/null | tail -100 || true
+    echo "=== lhpc build log (tail) ==="
+    cat "$ROOT"/logs/build-"$stack"*.log 2>/dev/null | tail -100 || true
 
-  local marker
-  marker="$("$PY" "${LHPC_SRC_DIR:-/opt/lhpc-src}/tools/build_regression.py" "$stack" "$cap" || true)"
-  if [ -n "$marker" ]; then
-    {
-      printf '%s\n' "$marker"
-      printf 'builder-run: %s\n' "${GITHUB_RUN_ID:-unknown}"
-      printf 'builder-attempt: %s\n' "${GITHUB_RUN_ATTEMPT:-unknown}"
-      printf 'lhpc-commit: %s\n' "${LHPC_COMMIT:-unknown}"
-    } > "${out_dir}/${stack}.regression"
-    echo "==> wrote ${out_dir}/${stack}.regression — this stack's OWN build step failed"
-  else
+    marker="$("$PY" "${LHPC_SRC_DIR:-/opt/lhpc-src}/tools/build_regression.py" "$stack" "$cap" || true)"
+    if [ -n "$marker" ]; then
+      {
+        printf '%s\n' "$marker"
+        printf 'builder-run: %s\n' "${GITHUB_RUN_ID:-unknown}"
+        printf 'builder-attempt: %s\n' "${GITHUB_RUN_ATTEMPT:-unknown}"
+        printf 'lhpc-commit: %s\n' "${LHPC_COMMIT:-unknown}"
+      } > "${out_dir}/${stack}.regression"
+      echo "==> wrote ${out_dir}/${stack}.regression — this stack's OWN build step failed"
+      break
+    fi
     echo "==> no regression evidence: nothing here says the recipe broke"
-  fi
+
+    line="$("$PY" "$(dirname "${BASH_SOURCE[0]}")/lib_transfer.py" "$cap" || true)"
+    [ -n "$line" ] && [ "$k" -lt "${#waits[@]}" ] || break
+    # The job's timeout is 120 min (.github/workflows/build.yml). A repeat starts only while it can
+    # still finish: elapsed + wait + 30 min (about 3x the longest green build) within 110 min.
+    if [ $(( $(date +%s) - ${BUILD_T0:-$(date +%s)} + waits[k] + 1800 )) -gt 6600 ]; then
+      echo "==> no time left for a repeat (transfer failure: $line)"
+      break
+    fi
+    echo "==> transfer failure ended lhpc build, repeating in ${waits[k]} s ($((k + 1))/${#waits[@]}): $line"
+    sleep "${waits[k]}"
+    k=$((k + 1))
+  done
   rm -f "$cap"
   return "$rc"
 }

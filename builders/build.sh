@@ -7,6 +7,8 @@
 # credentials of any kind (the workflow's build job runs with contents: read and a
 # persist-credentials:false checkout on the host side).
 set -euo pipefail
+# The start of this build, for the repeat budget of a transfer failure (lib-build.sh build_stack).
+export BUILD_T0="${BUILD_T0:-$(date +%s)}"
 
 echo "==> Environment"
 uname -m

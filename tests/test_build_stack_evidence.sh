@@ -71,4 +71,52 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$LHPC"; chmod +x "$LHPC"
 ( source "$LIB"; build_stack meshcore ) >/dev/null 2>&1
 [ ! -f "$TMP/out/meshcore.regression" ] || { echo "FAIL: a green build wrote evidence"; exit 1; }
 echo "  ok: a successful build writes nothing"
+
+# ---- a failure that a TRANSFER ended is repeated, at most twice; nothing else is ----
+export BUILD_TRANSFER_WAITS="0 0"
+STEPLOG="$TMP/root/logs/build-meshcore-node-1.log"
+repeat_case() {  # why, failures before a pass, step-log text, expected calls, expected rc (0|red), extra check
+  local why="$1" fails="$2" text="$3" calls="$4" want="$5" grepfor="${6:-}" got rc log="$TMP/run.log"
+  rm -f "$TMP/out/meshcore.regression" "$TMP/calls"
+  printf '%s' "$text" > "$STEPLOG"
+  cat > "$LHPC" <<SH
+#!/usr/bin/env bash
+echo x >> "$TMP/calls"
+[ "\$(wc -l < "$TMP/calls")" -gt $fails ] && exit 0
+echo "  [failed] build meshcore-node (rc 1, log $STEPLOG)"
+exit 1
+SH
+  chmod +x "$LHPC"
+  set +e; ( source "$LIB"; build_stack meshcore ) > "$log" 2>&1; rc=$?; set -e
+  got="$(wc -l < "$TMP/calls")"
+  [ "$got" = "$calls" ] || { echo "FAIL: $why — $got calls, want $calls"; cat "$log"; exit 1; }
+  if [ "$want" = 0 ]; then [ "$rc" = 0 ] || { echo "FAIL: $why — rc $rc"; exit 1; }
+  else [ "$rc" != 0 ] || { echo "FAIL: $why — green"; exit 1; }; fi
+  [ -z "$grepfor" ] || grep -qF -- "$grepfor" "$log" || { echo "FAIL: $why — no '$grepfor'"; cat "$log"; exit 1; }
+  echo "  ok: $why"
+}
+PIO="PackageException: Got the unrecognized status code '504' when downloaded https://github.com/arduino-libraries/NTPClient/archive/refs/tags/3.2.1.zip"
+repeat_case "a PlatformIO 504 that ended the build is repeated once and passes" 1 "$PIO"$'\n' 2 0 \
+  "==> transfer failure ended lhpc build, repeating in 0 s (1/2): $PIO"
+repeat_case "a meson 503 under its two wrapper lines is repeated" 1 \
+  $'fatal: unable to access \'https://gitlab.com/q/k.git/\': The requested URL returned error: 503\n../qemu/ui/meson.build:175:22: ERROR: Git command failed: [fetch]\nERROR: meson setup failed\n' 2 0
+repeat_case "a recovered transfer followed by a compile error is not repeated" 1 \
+  $'curl: (28) Operation timed out\nsrc/main.cpp:12:5: error: \'radio\' was not declared\n' 1 red
+repeat_case "a 404 is not repeated" 1 \
+  $'fatal: unable to access \'https://github.com/x/y.git/\': The requested URL returned error: 404\n' 1 red
+repeat_case "a transfer every time: two repeats, then red as before" 9 "$PIO"$'\n' 3 red \
+  "==> no regression evidence"
+BUILD_T0=$(( $(date +%s) - 6000 )) repeat_case "no time left: not repeated" 1 "$PIO"$'\n' 1 red \
+  "==> no time left for a repeat"
+
+# An attributed own-step failure writes evidence and is never repeated, transfer line or not.
+rm -f "$TMP/out/meshcore.regression" "$TMP/calls"
+printf '%s\n' "$PIO" > "$TMP/root/logs/$(basename "$OWNED")"
+printf '#!/usr/bin/env bash\necho x >> %q\necho %q\nexit 1\n' "$TMP/calls" \
+  "  [failed] build x (rc 1, log $TMP/root/logs/$(basename "$OWNED"))" > "$LHPC"; chmod +x "$LHPC"
+( source "$LIB"; build_stack meshcore ) >/dev/null 2>&1 || true
+[ -f "$TMP/out/meshcore.regression" ] || { echo "FAIL: own-step failure — no evidence"; exit 1; }
+[ "$(wc -l < "$TMP/calls")" = 1 ] || { echo "FAIL: own-step failure was repeated"; exit 1; }
+echo "  ok: an attributed own-step failure writes evidence and is not repeated"
+unset BUILD_TRANSFER_WAITS
 echo "build_stack evidence: all cases pass"
