@@ -6,7 +6,7 @@
 `build_stack` (lib-build.sh) repeats `lhpc build` only when this prints a line: a network or server
 failure (a name that does not resolve, a refused or reset connection, a timeout, an HTTP 5xx) was
 the error the failing step ENDED with. A transfer the build recovered from earlier, followed by any
-other failure, is not one: only the decisive line decides. An HTTP 4xx is never a transfer.
+other failure, is not one: only the decisive line decides. An HTTP status in the deciding line decides first: 5xx is one, a 4xx never is.
 
 The text judged is the failing step's own log, named by the last `[failed] build <component>
 (rc N, log <path>)` line `lhpc build` prints (the controller's TYPED_BUILD_FAILURE), else the
@@ -35,8 +35,10 @@ TRANSPORT = re.compile(
     r"Could not resolve host|Failed to connect|Connection (?:refused|reset|timed out)|timed out"
     r"|Temporary failure in name resolution|Name or service not known|Network is unreachable"
     r"|ConnectionError|ReadTimeoutError|ConnectTimeoutError|urlopen error \[Errno"
-    r"|(?:returned error|HTTP [Ee]rror):? 5\d\d|status code '5\d\d'"
     r"|curl: \((?:5|6|7|28|35|52|56)\)")
+# An HTTP status in the deciding line decides first: 5xx is a transfer failure, anything else
+# (a 4xx) never is, whatever else the line holds (a URL can contain "ReadTimeoutError").
+HTTP_STATUS = re.compile(r"(?:returned error|HTTP [Ee]rror):? (\d{3})|status code '(\d{3})'")
 WRAPPER_STEPS = 2
 
 
@@ -45,7 +47,8 @@ def step_text(output: str) -> str:
     found = list(TYPED_BUILD_FAILURE.finditer(output))
     if found:
         try:
-            return Path(found[-1].group(2)).read_text(encoding="utf-8", errors="replace")[-20000:]
+            # Whole: the decisive line is the LAST error, wherever it is; a tail window could cut it.
+            return Path(found[-1].group(2)).read_text(encoding="utf-8", errors="replace")
         except OSError:
             pass
     return "\n".join(ln for ln in output.splitlines() if not TYPED_BUILD_FAILURE.search(ln))
@@ -61,7 +64,10 @@ def decisive_transfer(text: str) -> str:
         if at > 0 and WRAPPER.search(errors[at]):
             at -= 1
     line = errors[at]
-    return " ".join(line.split())[:300] if TRANSPORT.search(line) else ""
+    status = HTTP_STATUS.search(line)
+    transfer = (status.group(1) or status.group(2)).startswith("5") if status \
+        else bool(TRANSPORT.search(line))
+    return " ".join(line.split())[:300] if transfer else ""
 
 
 def main(argv: list) -> int:

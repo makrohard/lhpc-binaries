@@ -176,6 +176,8 @@ build_stack() {
   # A failure that a TRANSFER ended (lib_transfer.py: the failing step's own last error is a
   # network or server failure) is repeated, at most twice, after a wait. Nothing else is: the
   # regression check comes first, and evidence written means the recipe broke.
+  # At most REPEATS repeats, whatever BUILD_TRANSFER_WAITS lists (it only sets the waits).
+  local -r repeats=2
   read -r -a waits <<< "${BUILD_TRANSFER_WAITS:-60 180}"
   cap="$(mktemp)"
   while :; do
@@ -202,14 +204,14 @@ build_stack() {
     echo "==> no regression evidence: nothing here says the recipe broke"
 
     line="$("$PY" "$(dirname "${BASH_SOURCE[0]}")/lib_transfer.py" "$cap" || true)"
-    [ -n "$line" ] && [ "$k" -lt "${#waits[@]}" ] || break
+    [ -n "$line" ] && [ "$k" -lt "$repeats" ] && [ "$k" -lt "${#waits[@]}" ] || break
     # The job's timeout is 120 min (.github/workflows/build.yml). A repeat starts only while it can
     # still finish: elapsed + wait + 30 min (about 3x the longest green build) within 110 min.
     if [ $(( $(date +%s) - ${BUILD_T0:-$(date +%s)} + waits[k] + 1800 )) -gt 6600 ]; then
       echo "==> no time left for a repeat (transfer failure: $line)"
       break
     fi
-    echo "==> transfer failure ended lhpc build, repeating in ${waits[k]} s ($((k + 1))/${#waits[@]}): $line"
+    echo "==> transfer failure ended lhpc build, repeating in ${waits[k]} s ($((k + 1))/$repeats): $line"
     sleep "${waits[k]}"
     k=$((k + 1))
   done

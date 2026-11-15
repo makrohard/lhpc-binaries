@@ -108,6 +108,8 @@ repeat_case "a 404 is not repeated" 1 \
   $'fatal: unable to access \'https://github.com/x/y.git/\': The requested URL returned error: 404\n' 1 red
 repeat_case "a transfer every time: two repeats, then red as before" 9 "$PIO"$'\n' 3 red \
   "==> no regression evidence"
+BUILD_TRANSFER_WAITS="0 0 0" repeat_case "three waits listed: still two repeats at most" 9 \
+  "$PIO"$'\n' 3 red "(2/2)"
 BUILD_T0=$(( $(date +%s) - 6000 )) repeat_case "no time left: not repeated" 1 "$PIO"$'\n' 1 red \
   "==> no time left for a repeat"
 

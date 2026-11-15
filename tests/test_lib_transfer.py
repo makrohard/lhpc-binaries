@@ -48,12 +48,18 @@ def test_a_build_ended_by_a_transfer_is_one(text, decided):
     "curl: (28) Operation timed out after 30001 milliseconds\nretrying ... ok\n"
     "src/main.cpp:12:5: error: 'radio' was not declared in this scope\n",
     "fatal: unable to access 'https://github.com/x/y.git/': The requested URL returned error: 404\n",
+    # A status decides before any transport word: here the URL holds one.
+    "fatal: unable to access 'https://example.org/ReadTimeoutError/repo.git/': The requested URL "
+    "returned error: 404\n",
+    "PackageException: Got the unrecognized status code '404' when downloaded "
+    "https://example.org/timed out/x.zip\n",
     "fatal: unable to access 'https://github.com/x/y.git/': The requested URL returned error: 503\n"
     "ERROR: meson setup failed\nERROR: Git command failed\nERROR: meson setup failed\n",
     "A wrapper over an error of its own:\nerror: patch does not apply\nERROR: meson setup failed\n",
     "Compiling ... done\n",
     "",
-], ids=["recovered-then-compile-error", "http-404", "three-wrappers-deep", "wrapper-over-own-error",
+], ids=["recovered-then-compile-error", "http-404", "http-404-transport-word-in-url",
+        "platformio-404-transport-word-in-url", "three-wrappers-deep", "wrapper-over-own-error",
         "no-error-line", "empty"])
 def test_anything_else_is_not(text):
     assert lt.decisive_transfer(text) == ""
@@ -78,3 +84,13 @@ def test_the_command_prints_the_deciding_line_only_for_a_transfer(tmp_path, caps
     assert lt.main([str(cap)]) == 0 and "504" in capsys.readouterr().out
     cap.write_text("error: 'radio' was not declared in this scope\n")
     assert lt.main([str(cap)]) == 0 and capsys.readouterr().out == ""
+
+
+def test_the_decisive_line_is_found_however_much_output_follows_it(tmp_path):
+    """No tail window: the 504 that ended the step stays decisive behind 30 000 characters of
+    output without an error line (a PlatformIO dependency listing, say)."""
+    log = tmp_path / "build-meshtastic-1.log"
+    log.write_text(PIO_504 + "Dependency Graph |-- some-library @ 1.0.0\n" * 750)
+    assert log.stat().st_size - len(PIO_504) > 30000
+    out = f"  [failed] build meshtastic (rc 1, log {log})\n"
+    assert "status code '504'" in lt.decisive_transfer(lt.step_text(out))
