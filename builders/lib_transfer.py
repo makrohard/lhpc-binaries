@@ -12,7 +12,10 @@ The text judged is the failing step's own log, named by the last `[failed] build
 (rc N, log <path>)` line `lhpc build` prints (the controller's TYPED_BUILD_FAILURE), else the
 `lhpc build` output without those lines. Its decisive line is its last error line; two wrapper
 lines that only restate the error above them (`meson setup failed`, `Git command failed`) hand the
-decision to the error line above, at most twice.
+decision to the line above, at most twice. Default deny: the deciding line is the first line from the
+end that is not blank, not one of those wrappers and not meson's log pointer; when that line is not a
+transfer error (a compile or link failure, a make/ninja/CMake end line, any output not known here),
+nothing is repeated, whatever transfer line came earlier.
 
 The patterns start from the controller release lane's `_DECISIVE` and `_TRANSPORT`
 (testlab/lhpc_testlab/release.py) and add what the builder meets and the lane does not know:
@@ -40,6 +43,10 @@ TRANSPORT = re.compile(
 # (a 4xx) never is, whatever else the line holds (a URL can contain "ReadTimeoutError").
 HTTP_STATUS = re.compile(r"(?:returned error|HTTP [Ee]rror):? (\d{3})|status code '(\d{3})'")
 WRAPPER_STEPS = 2
+# What may follow the deciding line besides blank lines and the wrappers (meson's pointer).
+TRAILER = re.compile(r"A full log can be found at ")
+# gcc/clang: `file:line[:col]: [fatal ]error:` (lowercase). Meson's `file:l:c: ERROR:` is not one.
+COMPILER = re.compile(r"\S+:\d+(?::\d+)?: (?:fatal )?error:")
 
 
 def step_text(output: str) -> str:
@@ -55,19 +62,31 @@ def step_text(output: str) -> str:
 
 
 def decisive_transfer(text: str) -> str:
-    """The deciding error line when it is a transfer failure, else ""."""
-    errors = [ln.strip() for ln in text.splitlines() if ERROR_LINE.search(ln)]
-    if not errors:
-        return ""
-    at = len(errors) - 1
-    for _ in range(WRAPPER_STEPS):
-        if at > 0 and WRAPPER.search(errors[at]):
-            at -= 1
-    line = errors[at]
+    """The deciding line when it is a transfer failure, else "". Default deny: read from the end,
+    only blank lines, meson's "A full log can be found at" and at most two wrapper lines may come
+    after the deciding line; the first other line decides, and anything but a transfer error there
+    (a compile or link failure, a make/ninja/CMake end line, any unknown output) means no repeat."""
+    wrappers = 0
+    for raw in reversed(text.splitlines()):
+        line = raw.strip()
+        if not line or TRAILER.match(line):
+            continue
+        if WRAPPER.search(line) and wrappers < WRAPPER_STEPS:
+            wrappers += 1
+            continue
+        return " ".join(line.split())[:300] if is_transfer(line) else ""
+    return ""
+
+
+def is_transfer(line: str) -> bool:
+    """An error line that a network or server failure ended. A compiler diagnostic never is, whatever
+    it names; an HTTP status decides before any transport word (5xx is one, a 4xx never is)."""
+    if not ERROR_LINE.search(line) or COMPILER.match(line):
+        return False
     status = HTTP_STATUS.search(line)
-    transfer = (status.group(1) or status.group(2)).startswith("5") if status \
-        else bool(TRANSPORT.search(line))
-    return " ".join(line.split())[:300] if transfer else ""
+    if status:
+        return (status.group(1) or status.group(2)).startswith("5")
+    return bool(TRANSPORT.search(line))
 
 
 def main(argv: list) -> int:
