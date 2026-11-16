@@ -184,3 +184,21 @@ def test_without_the_test_ports_the_smoke_polls_meshtasticds_own():
     """The real build smokes the real daemon on its own ports: the overrides only move a fake."""
     text = SMOKE.read_text()
     assert 'web_port="${SMOKE_WEB_PORT:-9443}"' in text and 'api_port="${SMOKE_API_PORT:-4403}"' in text
+
+
+def test_the_fake_refuses_a_config_that_names_another_web_port(tmp_path):
+    """The fake serves only where it was handed a socket; a config naming another web port (a smoke
+    that wrote the wrong one) stops it, as a real meshtasticd would serve where nobody polls."""
+    fake = tmp_path / "meshtasticd"
+    fake.write_text(FAKE.format(python=sys.executable))
+    fake.chmod(0o755)
+    conf = tmp_path / "config.yaml"
+    (web,) = _hold_ports([True])
+    try:
+        conf.write_text(f"Webserver:\n  Port: {web.getsockname()[1] + 1}\n")
+        r = subprocess.run([str(fake), "-c", str(conf)], capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, HOME=str(tmp_path), FAKE_WEB_FD=str(web.fileno())),
+                           pass_fds=(web.fileno(),))
+    finally:
+        web.close()
+    assert r.returncode == 9 and "is not the given socket's" in r.stderr, r.stdout + r.stderr
