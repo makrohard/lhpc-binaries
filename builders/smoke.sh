@@ -123,16 +123,25 @@ smoke_meshcom() {
     if [ "$web" != "1" ]; then echo "FAIL: meshcom web GUI not reachable on :18083" >&2; exit 8; fi
     echo "SMOKE: PASS (meshcom boots + web GUI reachable on :18083)"
   )
+  smoke_bridge
+}
 
+smoke_bridge() {
   # --- bridge: exec + STARTUP path (the packaged bridge was only existence+ldd checked before) ---
   # `--backend fake` is the built-in bounded backend, so no real LoRaHAM daemon or MeshCom endpoint
   # is needed: the bridge must execute (dynamic link OK), then actually come up and serve TCP.
   local bridge="$ROOT/src/meshcom-loraham-bridge/build/meshcom-loraham-bridge"
+  local bport="${SMOKE_BRIDGE_PORT:-7018}" help
   [ -x "$bridge" ] || { echo "FAIL: bridge not at $bridge" >&2; exit 7; }
   echo "bridge version: $("$bridge" --version 2>&1 | head -1)"
   "$bridge" --version >/dev/null 2>&1 || { echo "FAIL: bridge --version did not exit 0" >&2; exit 7; }
+  # A bridge from 0.3.0 on refuses to start without its TX power ceiling (--max-power, required); an
+  # older one refuses the unknown flag. Its own --help says which it is. The fake backend has no radio.
+  local maxp=()
+  help="$("$bridge" --help 2>&1 || true)"
+  if grep -q -- '--max-power' <<<"$help"; then maxp=(--max-power 10); fi
   local blog; blog="$(mktemp)"
-  "$bridge" --backend fake --bind 127.0.0.1 --port 7018 >"$blog" 2>&1 &
+  "$bridge" --backend fake --bind 127.0.0.1 --port "$bport" "${maxp[@]}" >"$blog" 2>&1 &
   local bpid=$!
   sleep 2
   if ! kill -0 "$bpid" 2>/dev/null; then
@@ -140,18 +149,19 @@ smoke_meshcom() {
     echo "FAIL: bridge exited during startup" >&2; exit 7
   fi
   # It must be genuinely serving on its TCP port — bash /dev/tcp, no extra tooling.
-  if ! (exec 3<>/dev/tcp/127.0.0.1/7018) 2>/dev/null; then
+  if ! (exec 3<>/dev/tcp/127.0.0.1/"$bport") 2>/dev/null; then
     kill -KILL "$bpid" 2>/dev/null || true
     echo "=== bridge log ==="; cat "$blog" >&2
-    echo "FAIL: bridge not accepting TCP on :7018" >&2; exit 8
+    echo "FAIL: bridge not accepting TCP on :$bport" >&2; exit 8
   fi
   kill -TERM "$bpid" 2>/dev/null; sleep 1; kill -KILL "$bpid" 2>/dev/null || true
-  echo "SMOKE: PASS (bridge starts with fake backend + serves TCP on :7018)"
+  echo "SMOKE: PASS (bridge starts with fake backend${maxp[*]:+ ${maxp[*]}} + serves TCP on :$bport)"
 }
 
 case "$STACK" in
   daemon)     smoke_daemon ;;
   meshtastic) smoke_meshtastic ;;
   meshcom)    smoke_meshcom ;;
+  meshcom-bridge) smoke_bridge ;;   # the bridge part alone (tests)
   *) echo "unknown stack for smoke: $STACK" >&2; exit 2 ;;
 esac
