@@ -187,6 +187,15 @@ try:
                     if m.size > 65536:
                         sys.exit(f"FAIL: {raw!r} is larger than a build-input record")
                     sidecars.append(hashlib.sha256(tf.extractfile(m).read()).hexdigest())
+        # The end marker ends the member loop, not the stream: tar pads its last record with zero
+        # bytes. Read on to EOF (closing the pipe early cut zstd off mid-write: EPIPE, a nonzero
+        # exit on an intact archive) and require every byte after the marker to be zero.
+        while chunk := tf.fileobj.read(1 << 16):
+            if chunk.count(0) != len(chunk):
+                sys.exit("FAIL: data after the tar end marker")
+            total += len(chunk)
+            if total > MAX_TOTAL_BYTES:
+                sys.exit(f"FAIL: archive expands beyond {MAX_TOTAL_BYTES} bytes")
 finally:
     if zstd.stdout:
         zstd.stdout.close()
