@@ -36,11 +36,13 @@ def test_the_dev_build_checks_the_jdk_before_the_upstream_recipe():
     assert check, "the dev build does not verify the JDK tarball's sha256 (exit 4)"
     home = re.search(r"^\s*export JAVA_HOME=/opt/jdk ", dev, re.M)
     assert home, "the dev build does not set JAVA_HOME=/opt/jdk"
-    recipe = dev.find('echo "==> Upstream recipe"')
-    assert recipe >= 0, "the dev build has no upstream recipe step"
-    assert check.start() < home.start() < recipe
+    recipe = re.search(r'^\s*\(cd "\$WORK/web" && pnpm install --frozen-lockfile\)$', dev, re.M)
+    assert recipe, "the dev build does not run upstream's recipe (pnpm install --frozen-lockfile)"
+    assert check.start() < home.start() < recipe.start()
 
 
 def test_the_stable_build_uses_no_java():
     _, stable = _channel_blocks(BUILDER.read_text())
+    fetch = r'^\s*curl -fsSL --retry 3 -o "\$TAR" "\$UPSTREAM/releases/download/\$WEB_VERSION/build\.tar"$'
+    assert re.search(fetch, stable, re.M), "the stable build does not download upstream's build.tar"
     assert not re.search(r"jdk|java", stable, re.I)
