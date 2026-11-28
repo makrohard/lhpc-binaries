@@ -68,8 +68,8 @@ The Meshtastic browser client as its own artifact, for the controller's `stable`
 `binary` selector uses the manifest's own pinned release and never reads this). Run **build-binary** with
 `stack = meshtastic-web`, the `channel`, and an `lhpc_ref`; there is no ref for the client itself:
 - `dev`: upstream `main` HEAD at run time (`git ls-remote`), built with upstream's recipe (`pnpm install
-  --frozen-lockfile`, `pnpm run build`, `pnpm run package`) under a sha256-pinned Node 24; `web_version` is
-  upstream's nightly label `nightly-<newest release tag>-<12 hex>`;
+  --frozen-lockfile`, `pnpm run build`, `pnpm run package`) under a sha256-pinned Node 24 and JDK 21 (Eclipse
+  Temurin, build time only); `web_version` is upstream's nightly label `nightly-<newest release tag>-<12 hex>`;
 - `stable`: the newest upstream release's `build.tar`, republished as it is; `web_version` is its tag.
 - a `dev` run with `source_commit` (40 hex, an upstream commit) builds and smoke-tests that commit instead of
   `main` HEAD: a diagnostic (to bisect a red dev smoke) that is never published.

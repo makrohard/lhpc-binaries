@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The Meshtastic web client for one channel, inside the Trixie container. It takes NO ref:
 #   dev    = upstream `main` HEAD at run time (`git ls-remote`), built with upstream's own recipe
-#            (pnpm install --frozen-lockfile; apps/web: pnpm run build, pnpm run package);
+#            (pnpm install --frozen-lockfile; apps/web: pnpm run build, pnpm run package) under a
+#            sha256-pinned Node and JDK 21 (upstream's sdk-kmp Gradle build needs it);
 #   stable = upstream's newest release, its `build.tar` asset republished as it is.
 # A dev SOURCE_COMMIT (40 hex) builds that upstream commit instead of main HEAD: a DIAGNOSTIC run
 # (smoke included) that the workflow never publishes and publish.sh refuses.
@@ -23,6 +24,11 @@ fi
 # builds with Node 24; the Pi never runs it).
 NODE_VERSION=v24.21.0
 NODE_SHA256=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+# JDK for the dev build: Eclipse Temurin 21 (full JDK), the official linux-aarch64 tarball, pinned by
+# release and sha256 (upstream's sdk-kmp Gradle build needs JDK 21; build time only, the Pi never runs
+# Java). Bump both from the release's .sha256.txt.
+JDK_VERSION=21.0.13.1+2
+JDK_SHA256=8c72816a6b308842d5ed1f13e5826b69c567da4784f7238d7e800efa71fe54b1
 
 WORK="$(mktemp -d)"
 TAR="$WORK/build.tar"
@@ -47,6 +53,14 @@ if [ "$CHANNEL" = dev ]; then
   mkdir -p /opt/node && tar -xJf "$WORK/node.tar.xz" -C /opt/node --strip-components=1
   export PATH="/opt/node/bin:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
   corepack enable                                   # pnpm at the version upstream's packageManager names
+
+  echo "==> JDK $JDK_VERSION (sha256-pinned)"
+  curl -fsSL --retry 3 -o "$WORK/jdk.tar.gz" \
+    "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-${JDK_VERSION/+/%2B}/OpenJDK21U-jdk_aarch64_linux_hotspot_${JDK_VERSION/+/_}.tar.gz"
+  echo "$JDK_SHA256  $WORK/jdk.tar.gz" | sha256sum -c - >/dev/null || { echo "FAIL: JDK tarball sha256 mismatch" >&2; exit 4; }
+  mkdir -p /opt/jdk && tar -xzf "$WORK/jdk.tar.gz" -C /opt/jdk --strip-components=1
+  export JAVA_HOME=/opt/jdk PATH="/opt/jdk/bin:$PATH"
+  java -version
 
   echo "==> Upstream recipe"
   (cd "$WORK/web" && pnpm install --frozen-lockfile)
