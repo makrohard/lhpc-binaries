@@ -54,7 +54,7 @@ def test_the_entry_button_of_a_release_client_and_of_upstream_main_opens_the_dia
     assert sw.ENTRY.fullmatch(label)
 
 
-@pytest.mark.parametrize("label", ["Add connection to a group", "Connect", "Close connections"])
+@pytest.mark.parametrize("label", ["Add connection to a group", "Please add connection", "Connect", "Close connections"])
 def test_other_buttons_are_not_the_entry(label):
     assert not sw.ENTRY.search(label)
 

@@ -70,10 +70,11 @@ def run(url, host, log_path, timeout):
     left_ms = lambda: max(1, int((deadline - time.monotonic()) * 1000))  # noqa: E731
     step = "start the browser"
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            executable_path=os.environ.get("SMOKE_BROWSER", "/usr/bin/chromium"),
-            headless=True, args=["--ignore-certificate-errors", "--no-sandbox"])
+        browser = None
         try:
+            browser = p.chromium.launch(
+                executable_path=os.environ.get("SMOKE_BROWSER", "/usr/bin/chromium"),
+                headless=True, args=["--ignore-certificate-errors", "--no-sandbox"])
             page = browser.new_page(ignore_https_errors=True)
             page.set_default_timeout(left_ms())
             page.add_init_script(WELCOME_DISMISSED)
@@ -139,7 +140,8 @@ def run(url, host, log_path, timeout):
             first = str(exc).splitlines()[0] if str(exc) else ""
             raise RuntimeError(f"at '{step}': {type(exc).__name__}: {first}") from exc
         finally:
-            browser.close()
+            if browser is not None:
+                browser.close()
 
 
 def main(argv):
